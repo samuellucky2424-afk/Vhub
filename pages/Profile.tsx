@@ -27,12 +27,7 @@ const Profile: React.FC = () => {
                     </nav>
                 </div>
                 <div className="flex gap-3 w-full sm:w-auto">
-                    <button 
-                        onClick={() => setActiveTab('personal')}
-                        className="flex-1 sm:flex-none px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 dark:bg-zinc-800 dark:text-gray-300 dark:border-zinc-700 transition-colors"
-                    >
-                        Cancel
-                    </button>
+                    <button className="flex-1 sm:flex-none px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 dark:bg-zinc-800 dark:text-gray-300 dark:border-zinc-700 transition-colors">Cancel</button>
                     <button 
                         onClick={handleSave}
                         disabled={isSaving}

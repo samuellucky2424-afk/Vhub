@@ -77,7 +77,7 @@ const Dashboard: React.FC = () => {
           </motion.div>
           <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
             <div className="size-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-              <span className="material-symbols-outlined">phone_android</span>
+              <span className="material-symbols-outlined">history</span>
             </div>
             <div>
               <p className="text-sm text-slate-500 dark:text-zinc-400 font-medium">History</p>
@@ -120,7 +120,7 @@ const Dashboard: React.FC = () => {
         {/* History Table */}
         <motion.div variants={item} className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-[22px] font-bold tracking-tight">Numbers History</h2>
+            <h2 className="text-[22px] font-bold tracking-tight">History</h2>
             <button onClick={() => navigate('/numbers')} className="text-sm font-semibold text-primary hover:underline">View all</button>
           </div>
           <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm overflow-hidden">
@@ -130,43 +130,54 @@ const Dashboard: React.FC = () => {
                 <tr>
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Service</th>
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Number</th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Verification Code</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Code</th>
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-right">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
-                {activeNumbers.slice(0, 5).map((num) => (
-                  <motion.tr 
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    key={num.id} 
-                    className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/30 transition-colors"
-                  >
-                    <td className="px-6 py-4">
-                      <div className="flex items-center gap-3">
-                        <div className="size-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                           <span className="material-symbols-outlined text-lg">
-                            {num.service === 'WhatsApp' ? 'chat' : num.service === 'Telegram' ? 'send' : 'public'}
-                           </span>
+                {activeNumbers.slice(0, 5).map((num) => {
+                  // Find the latest code if available
+                  const latestCode = num.logs.find(log => log.code)?.code;
+                  
+                  return (
+                    <motion.tr 
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      key={num.id} 
+                      className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/30 transition-colors"
+                    >
+                      <td className="px-6 py-4">
+                        <div className="flex items-center gap-3">
+                          <div className="size-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                            <span className="material-symbols-outlined text-lg">
+                              {num.service === 'WhatsApp' ? 'chat' : num.service === 'Telegram' ? 'send' : 'public'}
+                            </span>
+                          </div>
+                          <span className="text-sm font-semibold">{num.service}</span>
                         </div>
-                        <span className="text-sm font-semibold">{num.service}</span>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 text-sm font-medium text-slate-600 dark:text-zinc-300">{num.number} ({num.country})</td>
-                    <td className="px-6 py-4 text-sm font-mono text-primary font-bold">
-                      {num.logs.find(log => log.code)?.code || 'Waiting...'}
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                        num.status === 'Active' 
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400'
-                            : 'bg-slate-100 text-slate-600'
-                      }`}>
-                        {num.status}
-                      </span>
-                    </td>
-                  </motion.tr>
-                ))}
+                      </td>
+                      <td className="px-6 py-4 text-sm font-medium text-slate-600 dark:text-zinc-300">{num.number} ({num.country})</td>
+                      <td className="px-6 py-4">
+                        {latestCode ? (
+                            <span className="inline-block bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 px-2.5 py-1 rounded-md font-mono text-sm font-bold tracking-widest text-primary select-all">
+                                {latestCode}
+                            </span>
+                        ) : (
+                            <span className="text-xs text-slate-400 italic">Waiting for SMS...</span>
+                        )}
+                      </td>
+                      <td className="px-6 py-4 text-right">
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                          num.status === 'Active' 
+                              ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400'
+                              : 'bg-slate-100 text-slate-600'
+                        }`}>
+                          {num.status}
+                        </span>
+                      </td>
+                    </motion.tr>
+                  );
+                })}
                 {activeNumbers.length === 0 && (
                      <tr>
                         <td colSpan={4} className="px-6 py-10 text-center text-slate-500">No history found.</td>

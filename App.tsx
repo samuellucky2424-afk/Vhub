@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppContextType, VirtualNumber, User } from './types';
 import { INITIAL_NUMBERS, MOCK_USER } from './constants';
 
@@ -9,7 +9,6 @@ import LoginPage from './pages/LoginPage';
 import SignUpPage from './pages/SignUpPage';
 import Dashboard from './pages/Dashboard';
 import ActiveNumbers from './pages/ActiveNumbers';
-import Profile from './pages/Profile';
 import Store from './pages/Store';
 import CheckoutSummary from './pages/checkout/CheckoutSummary';
 import CheckoutPayment from './pages/checkout/CheckoutPayment';
@@ -102,7 +101,6 @@ const App: React.FC = () => {
           <Route element={isAuthenticated ? <AuthenticatedLayout /> : <Navigate to="/login" replace />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/numbers" element={<ActiveNumbers />} />
-            <Route path="/profile" element={<Profile />} />
             <Route path="/store" element={<Store />} />
             
             {/* Checkout Flow */}
