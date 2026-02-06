@@ -80,7 +80,7 @@ const Dashboard: React.FC = () => {
               <span className="material-symbols-outlined">phone_android</span>
             </div>
             <div>
-              <p className="text-sm text-slate-500 dark:text-zinc-400 font-medium">Active Numbers</p>
+              <p className="text-sm text-slate-500 dark:text-zinc-400 font-medium">History</p>
               <h3 className="text-2xl font-bold tracking-tight">{activeNumbers.length}</h3>
             </div>
           </motion.div>
@@ -120,7 +120,7 @@ const Dashboard: React.FC = () => {
         {/* History Table */}
         <motion.div variants={item} className="space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-[22px] font-bold tracking-tight">Active Numbers</h2>
+            <h2 className="text-[22px] font-bold tracking-tight">Numbers History</h2>
             <button onClick={() => navigate('/numbers')} className="text-sm font-semibold text-primary hover:underline">View all</button>
           </div>
           <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm overflow-hidden">
@@ -130,7 +130,7 @@ const Dashboard: React.FC = () => {
                 <tr>
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Service</th>
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Number</th>
-                  <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Expiry</th>
+                  <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Verification Code</th>
                   <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-right">Status</th>
                 </tr>
               </thead>
@@ -153,7 +153,9 @@ const Dashboard: React.FC = () => {
                       </div>
                     </td>
                     <td className="px-6 py-4 text-sm font-medium text-slate-600 dark:text-zinc-300">{num.number} ({num.country})</td>
-                    <td className="px-6 py-4 text-sm text-slate-500 dark:text-zinc-400">{num.expiresAt}</td>
+                    <td className="px-6 py-4 text-sm font-mono text-primary font-bold">
+                      {num.logs.find(log => log.code)?.code || 'Waiting...'}
+                    </td>
                     <td className="px-6 py-4 text-right">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
                         num.status === 'Active' 
@@ -167,7 +169,7 @@ const Dashboard: React.FC = () => {
                 ))}
                 {activeNumbers.length === 0 && (
                      <tr>
-                        <td colSpan={4} className="px-6 py-10 text-center text-slate-500">No active numbers found.</td>
+                        <td colSpan={4} className="px-6 py-10 text-center text-slate-500">No history found.</td>
                      </tr>
                 )}
               </tbody>
