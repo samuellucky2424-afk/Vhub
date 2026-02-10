@@ -22,13 +22,13 @@ const AuthenticatedLayout: React.FC = () => {
       {/* Mobile Header */}
       <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-white dark:bg-[#2d2516] border-b border-[#e6e2db] dark:border-[#3d3322] px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-            <div className="bg-primary size-8 rounded-lg flex items-center justify-center text-white">
-                <span className="material-symbols-outlined">cell_tower</span>
-            </div>
-            <span className="font-bold text-lg">V-Number</span>
+          <div className="bg-primary size-8 rounded-lg flex items-center justify-center text-white">
+            <span className="material-symbols-outlined">cell_tower</span>
+          </div>
+          <span className="font-bold text-lg">V-Number</span>
         </div>
         <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-            <span className="material-symbols-outlined">{isMobileMenuOpen ? 'close' : 'menu'}</span>
+          <span className="material-symbols-outlined">{isMobileMenuOpen ? 'close' : 'menu'}</span>
         </button>
       </div>
 
@@ -49,15 +49,15 @@ const AuthenticatedLayout: React.FC = () => {
               </div>
             </div>
           </div>
-          
+
           <div className="lg:hidden p-6 mt-12">
-             <div className="flex items-center gap-3 mb-6">
-                 <img src={user?.avatar} alt="User" className="size-10 rounded-full" />
-                 <div>
-                     <p className="font-bold">{user?.name}</p>
-                     <p className="text-xs opacity-70">{user?.email}</p>
-                 </div>
-             </div>
+            <div className="flex items-center gap-3 mb-6">
+              <img src={user?.avatar} alt="User" className="size-10 rounded-full" />
+              <div>
+                <p className="font-bold">{user?.name}</p>
+                <p className="text-xs opacity-70">{user?.email}</p>
+              </div>
+            </div>
           </div>
 
           <nav className="flex-1 px-4 space-y-1 mt-4 lg:mt-0">
@@ -68,8 +68,8 @@ const AuthenticatedLayout: React.FC = () => {
                 onClick={() => setIsMobileMenuOpen(false)}
                 className={({ isActive }) => `
                   flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors
-                  ${isActive 
-                    ? 'bg-primary/10 text-primary font-bold' 
+                  ${isActive
+                    ? 'bg-primary/10 text-primary font-bold'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-white/5 font-medium'}
                 `}
               >
@@ -86,9 +86,9 @@ const AuthenticatedLayout: React.FC = () => {
               <span className="material-symbols-outlined text-sm">add</span>
               <span>New Number</span>
             </NavLink>
-            <button 
-                onClick={logout}
-                className="w-full flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-zinc-400 text-sm hover:text-red-500 transition-colors"
+            <button
+              onClick={logout}
+              className="w-full flex items-center gap-3 px-3 py-2 text-slate-600 dark:text-zinc-400 text-sm hover:text-red-500 transition-colors"
             >
               <span className="material-symbols-outlined text-[20px]">logout</span>
               <span>Logout</span>
@@ -104,9 +104,9 @@ const AuthenticatedLayout: React.FC = () => {
 
       {/* Mobile Overlay */}
       {isMobileMenuOpen && !isCheckout && (
-        <div 
-            className="fixed inset-0 bg-black/50 z-20 lg:hidden"
-            onClick={() => setIsMobileMenuOpen(false)}
+        <div
+          className="fixed inset-0 bg-black/50 z-20 lg:hidden"
+          onClick={() => setIsMobileMenuOpen(false)}
         />
       )}
     </div>

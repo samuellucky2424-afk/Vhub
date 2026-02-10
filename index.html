@@ -5,7 +5,9 @@
     <link rel="icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#eca013" />
+    <meta name="theme-color" content="#eca013" />
     <meta name="description" content="Virtual Number Hub" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval'; script-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https: wss:;">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet"/>
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
@@ -46,5 +48,6 @@
 </head>
   <body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white transition-colors duration-200">
     <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

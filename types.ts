@@ -11,7 +11,7 @@ export interface VirtualNumber {
   number: string;
   country: string; // 'US', 'UK', etc.
   service: string; // 'WhatsApp', 'Telegram', etc.
-  status: 'Active' | 'Expired' | 'Completed';
+  status: 'Active' | 'Expired' | 'Completed' | 'Pending' | 'Failed' | 'Refunded';
   expiresAt: string;
   logs: SMSLog[];
 }
@@ -28,6 +28,7 @@ export interface SMSLog {
 export interface AppState {
   user: User | null;
   balance: number;
+  totalSpent: number;
   activeNumbers: VirtualNumber[];
   transactions: any[];
   isAuthenticated: boolean;
@@ -38,4 +39,5 @@ export interface AppContextType extends AppState {
   logout: () => void;
   addNumber: (newNumber: VirtualNumber) => void;
   deductBalance: (amount: number) => void;
+  refreshNumbers: () => Promise<void>;
 }
