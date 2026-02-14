@@ -225,6 +225,17 @@ serve(async (req) => {
                     }
                 }
                 else {
+                    // Start of Throttle Check
+                    const lastChecked = localOrder.metadata?.status_checked_at;
+                    if (lastChecked) {
+                        const secondsSinceCheck = (Date.now() - new Date(lastChecked).getTime()) / 1000;
+                        if (secondsSinceCheck < 30) {
+                            log(`Order ${localOrder.id} checked ${Math.round(secondsSinceCheck)}s ago. Skipping.`);
+                            continue;
+                        }
+                    }
+                    // End of Throttle Check
+
                     log(`Order ${localOrder.id} (SMSPool: ${smspoolId}) missing from active list. Checking status...`);
 
                     try {
@@ -263,13 +274,19 @@ serve(async (req) => {
                             if (newStatus !== localOrder.payment_status && newStatus !== 'refunded') {
                                 updatePayload.payment_status = newStatus;
                             }
-                            if (newMetadata.sms_code && newMetadata.sms_code !== localOrder.sms_code) {
-                                updatePayload.sms_code = newMetadata.sms_code;
-                            }
+                            // Remove invalid column update
+                            // if (newMetadata.sms_code && newMetadata.sms_code !== localOrder.sms_code) {
+                            //     updatePayload.sms_code = newMetadata.sms_code;
+                            // }
 
-                            await supabase.from('orders').update(updatePayload).eq('id', localOrder.id);
-                            updates.push({ order_id: localOrder.id, status: newStatus });
-                            log(`Updated order ${localOrder.id} to ${newStatus}`);
+                            const { error: updateError } = await supabase.from('orders').update(updatePayload).eq('id', localOrder.id);
+
+                            if (updateError) {
+                                log(`Failed to update order ${localOrder.id}: ${updateError.message}`);
+                            } else {
+                                updates.push({ order_id: localOrder.id, status: newStatus });
+                                log(`Updated order ${localOrder.id} to ${newStatus}`);
+                            }
                         } else {
                             log(`No update needed for ${localOrder.id}. StatusVal: ${statusVal}`);
                         }
@@ -281,6 +298,101 @@ serve(async (req) => {
             }
 
             return new Response(JSON.stringify({ success: true, updates, debug: debugLogs }), {
+                headers: { ...corsHeaders, "Content-Type": "application/json" }
+            });
+        }
+
+
+        if (action === 'poll_sms') {
+            const { order_id } = payload;
+            if (!order_id) return new Response("Missing order_id", { status: 400, headers: corsHeaders });
+
+            const log = (msg: string) => console.log(`[poll_sms] ${msg}`);
+
+            // 1. Get request_id from DB
+            const { data: order } = await supabase.from('orders').select('request_id').eq('id', order_id).single();
+            if (!order || !order.request_id) {
+                return new Response(JSON.stringify({ success: false, message: "Order not found or no request_id" }), {
+                    headers: { ...corsHeaders, "Content-Type": "application/json" }
+                });
+            }
+
+            const smspoolId = order.request_id;
+            let foundCode: string | null = null;
+            let finalStatus: string | null = null;
+            let fullSmsText: string | null = null;
+
+            // 2. Poll SMSPool (Max 20 attempts ~ 100 seconds)
+            for (let i = 0; i < 20; i++) {
+                try {
+                    log(`Attempt ${i + 1}/20 checking order ${smspoolId}...`);
+                    const checkUrl = `https://api.smspool.net/sms/check?key=${SMSPOOL_API_KEY}&orderid=${smspoolId}`;
+                    const response = await fetch(checkUrl);
+                    const data = await response.json();
+
+                    if (data.status === 3 || data.status === 'completed') {
+                        if (data.sms) {
+                            foundCode = data.sms;
+                            fullSmsText = data.full_sms || data.sms; // SMSPool sometimes provides full_sms
+                            finalStatus = 'completed';
+                            log(`SMS Found: ${foundCode}`);
+                            break;
+                        }
+                    } else if (data.status === 6 || data.status === 'refunded') {
+                        finalStatus = 'refunded';
+                        log("Order refunded/expired.");
+                        break;
+                    }
+
+                    // Wait 5 seconds before next attempt
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+
+                } catch (err) {
+                    log(`Polling error: ${err.message}`);
+                    await new Promise(resolve => setTimeout(resolve, 5000));
+                }
+            }
+
+            // 3. Insert into 'verifications' if code found
+            if (foundCode) {
+                const { error: insertError } = await supabase
+                    .from('verifications')
+                    .insert({
+                        order_id: order_id,
+                        otp_code: foundCode,
+                        full_sms: fullSmsText,
+                        received_at: new Date().toISOString()
+                    });
+
+                if (insertError) {
+                    log(`Error inserting verification: ${insertError.message}`);
+                    return new Response(JSON.stringify({ success: false, message: "Failed to save verifications", error: insertError }), {
+                        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
+                    });
+                } else {
+                    log("Verification saved successfully.");
+                }
+
+                // Optional: Update order status to completed if not already
+                await supabase.from('orders').update({
+                    payment_status: 'completed',
+                    sms_code: foundCode,
+                    metadata: { ...order.metadata, smspool_status: 'completed' }  // Might need to fetch metadata first but skipping for speed
+                }).eq('id', order_id);
+
+                return new Response(JSON.stringify({ success: true, otp_code: foundCode, message: "SMS received and saved" }), {
+                    headers: { ...corsHeaders, "Content-Type": "application/json" }
+                });
+            }
+
+            if (finalStatus === 'refunded') {
+                await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', order_id);
+                return new Response(JSON.stringify({ success: false, message: "Order was refunded/expired" }), {
+                    headers: { ...corsHeaders, "Content-Type": "application/json" }
+                });
+            }
+
+            return new Response(JSON.stringify({ success: false, message: "Polling timed out, no SMS received yet." }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
             });
         }

@@ -8,60 +8,62 @@ const ActiveNumbers: React.FC = () => {
     const { activeNumbers, refreshNumbers } = useApp();
     const [selectedNumber, setSelectedNumber] = useState<VirtualNumber | null>(null);
     const [copiedCode, setCopiedCode] = useState<string | null>(null);
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
-    // Polling for new SMS
-    // Polling for new SMS and Order Status
+    const handleManualRefresh = async () => {
+        setIsRefreshing(true);
+        await refreshNumbers();
+        setTimeout(() => setIsRefreshing(false), 500);
+    };
+
+    // Realtime Subscription & Polling Trigger
     useEffect(() => {
-        const checkUpdates = async () => {
-            // 1. Check for SMS on Active numbers
-            const activeItems = activeNumbers.filter(n => n.status === 'Active');
-            if (activeItems.length > 0) {
-                try {
-                    const { data } = await supabase.functions.invoke('smspool-service', {
-                        body: { action: 'check_sms' }
-                    });
+        // 1. Trigger polling for any pending/active orders that need it
+        const triggerPolling = async () => {
+            const itemsToPoll = activeNumbers.filter(n =>
+                (n.status === 'Active' || n.status === 'Pending') &&
+                (!n.logs || n.logs.length === 0 || !n.logs.some(l => l.code))
+            );
 
-                    if (data && data.success && data.updates && data.updates.length > 0) {
-                        console.log("New SMS received! Refreshing...", data.updates);
-                        await refreshNumbers();
-                    }
-                } catch (err) {
-                    console.error("SMS polling error:", err);
-                }
-            }
-
-            // 2. Check status of Pending numbers
-            const pendingItems = activeNumbers.filter(n => n.status === 'Pending');
-            if (pendingItems.length > 0) {
-                for (const item of pendingItems) {
-                    try {
-                        console.log(`Checking status for pending order: ${item.id}`);
-                        const { data } = await supabase.functions.invoke('smspool-service', {
-                            body: { action: 'check_order', order_id: item.id }
-                        });
-
-                        // If status changed or response indicates update, refresh
-                        if (data && data.success) {
-                            // We could be smarter and only refresh if data.data.status changed, 
-                            // but for now, just refresh if we successfully checked.
-                            // Actually, purely checking doesn't mean it changed. 
-                            // But check_order updates DB. 
-                            // Let's refresh only if we think it might have changed or just once per cycle.
-                            // To avoid infinite aggressive refresh, let's rely on the DB update.
-                            // But we need to fetch the new state.
-                            // Let's trigger refresh.
-                            await refreshNumbers();
-                        }
-                    } catch (err) {
-                        console.error(`Status check error for ${item.id}:`, err);
-                    }
-                }
+            for (const item of itemsToPoll) {
+                // Fire and forget - don't await the result as it might take 100s
+                console.log(`Triggering background polling for ${item.id}...`);
+                fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/smspool-service`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                    },
+                    body: JSON.stringify({ action: 'poll_sms', order_id: item.id })
+                }).catch(err => console.error("Polling trigger error:", err));
             }
         };
 
-        const interval = setInterval(checkUpdates, 5000); // Check every 5 seconds
-        return () => clearInterval(interval);
-    }, [activeNumbers, refreshNumbers]);
+        triggerPolling();
+
+        // 2. Setup Realtime Subscription
+        const channel = supabase
+            .channel('verifications-channel')
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'verifications',
+                },
+                (payload) => {
+                    console.log("Realtime: New verification received!", payload);
+                    // Refresh data to show the new code
+                    refreshNumbers();
+                }
+            )
+            .subscribe();
+
+        return () => {
+            supabase.removeChannel(channel);
+        };
+    }, [activeNumbers.length]); // Re-run if number count changes (e.g. new purchase), but not on every refresh to avoid spamming
+
 
     // Helper to get latest log info
     const getLatestLog = (num: VirtualNumber) => {
@@ -85,6 +87,14 @@ const ActiveNumbers: React.FC = () => {
                     <p className="text-slate-500 dark:text-slate-400">View your purchased numbers and their received verification codes.</p>
                 </div>
                 <div className="flex items-center gap-3">
+                    <button
+                        onClick={handleManualRefresh}
+                        disabled={isRefreshing}
+                        className="flex items-center gap-2 bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 dark:hover:bg-zinc-700 text-slate-600 dark:text-slate-300 px-4 py-2 rounded-lg font-medium transition-colors disabled:opacity-50"
+                    >
+                        <span className={`material-symbols-outlined ${isRefreshing ? 'animate-spin' : ''}`}>refresh</span>
+                        Refresh
+                    </button>
                     <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-lg px-4 py-2 text-sm font-medium shadow-sm">
                         Active: <span className="text-emerald-500 font-bold">{activeNumbers.filter(n => n.status === 'Active').length}</span>
                     </div>

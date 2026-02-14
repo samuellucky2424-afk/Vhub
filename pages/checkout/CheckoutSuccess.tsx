@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../../src/lib/supabase';
+import { useApp } from '../../App';
 
 const CheckoutSuccess: React.FC = () => {
     const navigate = useNavigate();
     const location = useLocation();
+    const { refreshNumbers } = useApp();
     const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -36,6 +38,8 @@ const CheckoutSuccess: React.FC = () => {
                 if (order?.metadata?.phonenumber) {
                     setPhoneNumber(order.metadata.phonenumber);
                     setLoading(false);
+                    // Refresh global state so "My Numbers" is up to date
+                    refreshNumbers();
                 } else if (order?.payment_status === 'failed') {
                     setError(order.metadata?.payment_error || 'Payment verification failed');
                     setLoading(false);

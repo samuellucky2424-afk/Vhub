@@ -97,14 +97,31 @@ const CheckoutSummary: React.FC = () => {
 
             try {
                 console.log('Fetching price for country:', selectedCountry, 'service:', selectedService);
-                const { data, error } = await supabase.functions.invoke('smspool-service', {
-                    body: {
+                // Use direct fetch with Anon Key to avoid 401 issues with User Token
+                const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/smspool-service`;
+
+                const response = await fetch(functionUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                    },
+                    body: JSON.stringify({
                         action: 'get_price',
                         country: selectedCountry,
                         service: selectedService,
-                        _t: Date.now() // Cache buster
-                    }
+                    })
                 });
+
+                if (!response.ok) {
+                    console.error('Price fetch error:', response.status, response.statusText);
+                    return;
+                }
+
+                const data = await response.json();
+                const error = null;
+
+
 
                 if (!active) return;
 

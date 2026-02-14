@@ -21,7 +21,8 @@ async function checkOrders() {
 
     console.log(`Found ${data.length} active orders.`);
     data.forEach(o => {
-        console.log(`ID: ${o.id}, RequestID: ${o.request_id}, Phone: ${o.metadata?.phonenumber || o.metadata?.number}`);
+        console.log(`ID: ${o.id}, RequestID: ${o.request_id}, Phone: ${o.metadata?.phonenumber || o.metadata?.number}, Code: ${o.sms_code || o.metadata?.sms_code}, SMSPoolStatus: ${o.metadata?.smspool_status}`);
+        console.log(`Logs:`, JSON.stringify(o.metadata?.logs || []));
     });
 }
 

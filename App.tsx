@@ -112,6 +112,8 @@ const App: React.FC = () => {
             status = 'Refunded';
           }
 
+          const smsCode = o.sms_code || o.metadata?.sms_code;
+
           return {
             id: o.id,
             number: o.metadata?.phonenumber || o.metadata?.number || (status === 'Pending' ? 'Processing...' : '---'),
@@ -119,11 +121,11 @@ const App: React.FC = () => {
             service: o.service_type || 'Unknown',
             status: status as any, // Cast to match type definition or update type definition
             expiresAt: new Date(new Date(o.created_at).getTime() + 10 * 60 * 1000).toISOString(),
-            logs: o.sms_code ? [{
+            logs: smsCode ? [{
               id: `${o.id}-log`,
               sender: o.service_type || 'Service',
-              message: `Your verification code is ${o.sms_code}`,
-              code: o.sms_code,
+              message: `Your verification code is ${smsCode}`,
+              code: smsCode,
               receivedAt: new Date(o.created_at).toLocaleString(),
               isRead: false
             }] : []
