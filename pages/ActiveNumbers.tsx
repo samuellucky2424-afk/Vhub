@@ -9,6 +9,38 @@ const ActiveNumbers: React.FC = () => {
     const [selectedNumber, setSelectedNumber] = useState<VirtualNumber | null>(null);
     const [copiedCode, setCopiedCode] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
+    const [checkingIds, setCheckingIds] = useState<Set<string>>(new Set());
+
+    const checkStatus = async (orderId: string) => {
+        setCheckingIds(prev => new Set(prev).add(orderId));
+        try {
+            // Using fetch explicitly to avoid potential auth/session issues with invoke()
+            const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/smspool-service`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                },
+                body: JSON.stringify({ action: 'check_order', order_id: orderId })
+            });
+
+            if (!response.ok) {
+                throw new Error(`Function returned ${response.status}`);
+            }
+
+            const data = await response.json();
+            console.log("Check Status Result:", data);
+            await refreshNumbers();
+        } catch (err) {
+            console.error("Failed to check status:", err);
+        } finally {
+            setCheckingIds(prev => {
+                const newSet = new Set(prev);
+                newSet.delete(orderId);
+                return newSet;
+            });
+        }
+    };
 
     const handleManualRefresh = async () => {
         setIsRefreshing(true);
@@ -104,7 +136,8 @@ const ActiveNumbers: React.FC = () => {
                 </div>
             </div>
 
-            <div className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-sm overflow-hidden">
+            {/* Desktop Table View */}
+            <div className="hidden md:block bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl shadow-sm overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left border-collapse min-w-[800px]">
                         <thead className="bg-slate-50 dark:bg-zinc-800/50 border-b border-slate-200 dark:border-zinc-800">
@@ -147,7 +180,7 @@ const ActiveNumbers: React.FC = () => {
                                             </span>
                                         </td>
                                         <td className="px-6 py-4">
-                                            {latestLog?.code ? (
+                                            {latestLog?.code && latestLog.code !== 'PENDING' ? (
                                                 <button
                                                     onClick={() => copyToClipboard(latestLog.code!)}
                                                     className="group/btn relative flex items-center gap-2 bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 hover:border-primary hover:text-primary px-3 py-1.5 rounded-lg transition-all w-fit"
@@ -161,9 +194,18 @@ const ActiveNumbers: React.FC = () => {
                                                     )}
                                                 </button>
                                             ) : (
-                                                <div className="flex items-center gap-2 text-slate-400 italic text-sm">
-                                                    <span className="size-2 rounded-full bg-slate-300 dark:bg-slate-700 animate-pulse"></span>
-                                                    Waiting for SMS...
+                                                <div className="flex items-center gap-3">
+                                                    <div className="flex items-center gap-2 text-slate-400 italic text-sm">
+                                                        <span className="size-2 rounded-full bg-slate-300 dark:bg-slate-700 animate-pulse"></span>
+                                                        Waiting for SMS...
+                                                    </div>
+                                                    <button
+                                                        onClick={() => checkStatus(num.id)}
+                                                        disabled={checkingIds.has(num.id)}
+                                                        className="text-xs font-medium text-primary hover:underline disabled:opacity-50"
+                                                    >
+                                                        {checkingIds.has(num.id) ? 'Checking...' : 'Check Status'}
+                                                    </button>
                                                 </div>
                                             )}
                                         </td>
@@ -205,6 +247,108 @@ const ActiveNumbers: React.FC = () => {
                         </tbody>
                     </table>
                 </div>
+            </div>
+
+            {/* Mobile Card View */}
+            <div className="md:hidden space-y-4 pb-20">
+                {activeNumbers.map((num) => {
+                    const latestLog = getLatestLog(num);
+                    return (
+                        <div key={num.id} className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-2xl p-5 shadow-sm">
+                            {/* Card Header */}
+                            <div className="flex justify-between items-start mb-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shadow-sm">
+                                        <span className="material-symbols-outlined">
+                                            {num.service === 'WhatsApp' ? 'chat' : num.service === 'Telegram' ? 'send' : 'public'}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <h3 className="font-bold text-slate-900 dark:text-white">{num.service}</h3>
+                                        <p className="text-xs text-slate-500">{num.country}</p>
+                                    </div>
+                                </div>
+                                <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-1 rounded-full ${num.status === 'Active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                                    num.status === 'Pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                        num.status === 'Refunded' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
+                                            num.status === 'Failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                                'bg-slate-100 text-slate-500'}`}>
+                                    {num.status === 'Active' && <span className="size-1.5 bg-emerald-500 rounded-full animate-pulse"></span>}
+                                    {num.status === 'Pending' && <span className="size-1.5 bg-amber-500 rounded-full animate-pulse"></span>}
+                                    {num.status}
+                                </span>
+                            </div>
+
+                            {/* Number & Date */}
+                            <div className="flex justify-between items-center mb-4 pb-4 border-b border-slate-100 dark:border-zinc-800">
+                                <div>
+                                    <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Number</p>
+                                    <p className="font-mono font-medium text-slate-900 dark:text-white text-lg">{num.number}</p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1">Date</p>
+                                    <p className="text-sm font-medium text-slate-900 dark:text-white">
+                                        {latestLog ? latestLog.receivedAt.split('T')[0] : new Date(num.status === 'Pending' ? Date.now() : num.expiresAt).toLocaleDateString()}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* OTP Section */}
+                            <div className="bg-slate-50 dark:bg-black/20 rounded-xl p-4 mb-4">
+                                <p className="text-xs text-slate-500 uppercase font-bold tracking-wider mb-2 text-center">Latest Verification Code</p>
+                                {latestLog?.code && latestLog.code !== 'PENDING' ? (
+                                    <button
+                                        onClick={() => copyToClipboard(latestLog.code!)}
+                                        className="w-full flex flex-col items-center gap-2 group/btn"
+                                    >
+                                        <span className="font-mono font-bold text-3xl tracking-[0.2em] text-slate-900 dark:text-white group-hover/btn:text-primary transition-colors">
+                                            {latestLog.code}
+                                        </span>
+                                        <div className="flex items-center gap-1 text-xs text-primary font-bold">
+                                            <span className="material-symbols-outlined text-sm">
+                                                {copiedCode === latestLog.code ? 'check' : 'content_copy'}
+                                            </span>
+                                            {copiedCode === latestLog.code ? 'Copied!' : 'Tap to Copy'}
+                                        </div>
+                                    </button>
+                                ) : (
+                                    <div className="flex flex-col items-center gap-3 py-2">
+                                        <div className="flex items-center gap-2 text-slate-400 italic text-sm animate-pulse">
+                                            <span className="size-2 rounded-full bg-slate-300 dark:bg-slate-700"></span>
+                                            Waiting for SMS...
+                                        </div>
+                                        <button
+                                            onClick={() => checkStatus(num.id)}
+                                            disabled={checkingIds.has(num.id)}
+                                            className="text-xs bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 px-3 py-1.5 rounded-lg font-bold text-primary hover:bg-primary/5 transition-colors disabled:opacity-50"
+                                        >
+                                            {checkingIds.has(num.id) ? 'Checking...' : 'Check Status'}
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* View Details Button */}
+                            <button
+                                onClick={() => setSelectedNumber(num)}
+                                className="w-full py-3 rounded-xl bg-primary/10 hover:bg-primary/20 text-primary font-bold text-sm transition-colors flex items-center justify-center gap-2"
+                            >
+                                <span className="material-symbols-outlined text-lg">history</span>
+                                View Full History
+                            </button>
+                        </div>
+                    );
+                })}
+
+                {activeNumbers.length === 0 && (
+                    <div className="text-center py-10 px-4 bg-white dark:bg-zinc-900 rounded-2xl border border-slate-200 dark:border-zinc-800">
+                        <div className="size-16 bg-slate-50 dark:bg-zinc-800/50 rounded-full flex items-center justify-center mb-4 mx-auto">
+                            <span className="material-symbols-outlined text-slate-300 dark:text-zinc-600 text-3xl">inbox</span>
+                        </div>
+                        <h3 className="text-lg font-bold text-slate-900 dark:text-white">No active numbers</h3>
+                        <p className="text-slate-500 mt-2 text-sm">Purchase a virtual number to start receiving verification codes.</p>
+                    </div>
+                )}
             </div>
 
             {/* Modal for viewing all logs */}

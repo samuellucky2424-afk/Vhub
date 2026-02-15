@@ -317,9 +317,9 @@ const CheckoutPayment: React.FC = () => {
                         <h3 className="font-bold text-lg text-slate-900 dark:text-white">Order Details</h3>
                     </div>
                     <div className="p-6 md:p-8 flex flex-col gap-6">
-                        <div className="flex items-center justify-between p-4 bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-700 shadow-sm">
-                            <div className="flex items-center gap-4">
-                                <div className="size-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                        <div className="flex flex-col sm:flex-row items-center justify-between p-4 bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-700 shadow-sm gap-4">
+                            <div className="flex items-center gap-4 w-full sm:w-auto">
+                                <div className="size-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
                                     <span className="material-symbols-outlined text-2xl">
                                         {service === 'WhatsApp' ? 'chat' : 'public'}
                                     </span>
@@ -329,7 +329,7 @@ const CheckoutPayment: React.FC = () => {
                                     <p className="text-sm text-slate-500">{service} Verification</p>
                                 </div>
                             </div>
-                            <div className="font-black text-xl text-slate-900 dark:text-white">₦{finalAmountNGN?.toLocaleString()}</div>
+                            <div className="font-black text-xl text-slate-900 dark:text-white w-full sm:w-auto text-right sm:text-left border-t sm:border-t-0 border-slate-100 dark:border-zinc-800 pt-2 sm:pt-0">₦{finalAmountNGN?.toLocaleString()}</div>
                         </div>
 
                         {/* Payment Method */}

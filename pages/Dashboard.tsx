@@ -29,7 +29,7 @@ const Dashboard: React.FC = () => {
         initial={{ y: -50, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         transition={{ duration: 0.5 }}
-        className="sticky top-0 z-20 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md px-8 py-4 border-b border-slate-200 dark:border-zinc-800 flex items-center justify-between"
+        className="sticky top-0 z-20 bg-background-light/80 dark:bg-background-dark/80 backdrop-blur-md px-4 md:px-8 py-4 border-b border-slate-200 dark:border-zinc-800 flex items-center justify-between"
       >
         <div className="flex items-center gap-2">
           <span className="material-symbols-outlined text-slate-400">grid_view</span>
@@ -43,7 +43,7 @@ const Dashboard: React.FC = () => {
             <span className="text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Balance</span>
             <span className="text-sm font-bold text-primary">${balance.toFixed(2)}</span>
           </motion.div>
-          <div className="flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-3">
             <div className="text-right hidden sm:block">
               <p className="text-sm font-bold leading-none">{user?.name}</p>
               <p className="text-[10px] text-slate-500 font-medium">{user?.plan} Plan</p>
@@ -167,10 +167,10 @@ const Dashboard: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${num.status === 'Active' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                              num.status === 'Pending' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
-                                num.status === 'Refunded' ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-400' :
-                                  num.status === 'Failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' :
-                                    'bg-slate-100 text-slate-600'
+                            num.status === 'Pending' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
+                              num.status === 'Refunded' ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-400' :
+                                num.status === 'Failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' :
+                                  'bg-slate-100 text-slate-600'
                             }`}>
                             {num.status}
                           </span>

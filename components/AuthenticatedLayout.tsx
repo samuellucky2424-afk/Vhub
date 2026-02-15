@@ -98,7 +98,7 @@ const AuthenticatedLayout: React.FC = () => {
       )}
 
       {/* Main Content */}
-      <main className={`flex-1 flex flex-col h-screen overflow-hidden ${isCheckout ? 'w-full' : ''}`}>
+      <main className={`flex-1 flex flex-col h-screen overflow-hidden pt-14 lg:pt-0 ${isCheckout ? 'w-full' : ''}`}>
         <Outlet />
       </main>
 
