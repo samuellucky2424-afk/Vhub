@@ -4,12 +4,20 @@ import { useApp } from '../App';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../src/lib/supabase';
 
+// TypeScript declaration for Paystack
+declare global {
+  interface Window {
+    PaystackPop: any;
+  }
+}
+
 const Dashboard: React.FC = () => {
-  const { user, balance, totalSpent, activeNumbers } = useApp();
+  const { user, balance, totalSpent, activeNumbers, fetchWallet } = useApp();
   const navigate = useNavigate();
   const [showFundModal, setShowFundModal] = useState(false);
   const [fundAmount, setFundAmount] = useState('');
   const [fundingLoading, setFundingLoading] = useState(false);
+  const [verifyingPayment, setVerifyingPayment] = useState(false);
 
   const handleFundWallet = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,17 +36,69 @@ const Dashboard: React.FC = () => {
       if (error) throw error;
       if (!data.success) throw new Error(data.message || 'Failed to initialize payment');
 
-      // Redirect to Paystack
-      if (data.authorization_url) {
-        window.location.href = data.authorization_url;
-      } else {
-        throw new Error('No authorization URL returned');
+      const reference = data.reference;
+      const publicKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
+
+      if (!publicKey) {
+        throw new Error('Paystack public key not configured');
       }
+
+      // Open Paystack inline popup
+      const handler = window.PaystackPop.setup({
+        key: publicKey,
+        email: user?.email,
+        amount: amount * 100, // Convert to kobo
+        currency: 'NGN',
+        ref: reference,
+        callback: async function (response: any) {
+          console.log('Payment successful:', response);
+          setFundingLoading(false);
+          setVerifyingPayment(true);
+
+          // Poll for transaction confirmation
+          let attempts = 0;
+          const maxAttempts = 20;
+
+          const checkTransaction = async () => {
+            const { data: txData } = await supabase
+              .from('wallet_transactions')
+              .select('id, amount')
+              .eq('reference', reference)
+              .maybeSingle();
+
+            if (txData) {
+              console.log('Transaction confirmed!', txData);
+              await fetchWallet();
+              setVerifyingPayment(false);
+              setShowFundModal(false);
+              setFundAmount('');
+              alert(`Wallet funded successfully! ₦${amount} added to your balance.`);
+            } else {
+              attempts++;
+              if (attempts < maxAttempts) {
+                setTimeout(checkTransaction, 1500);
+              } else {
+                setVerifyingPayment(false);
+                alert('Payment received but verification is taking longer than usual. Your balance will update shortly.');
+                setShowFundModal(false);
+              }
+            }
+          };
+
+          checkTransaction();
+        },
+        onClose: function () {
+          console.log('Payment popup closed');
+          setFundingLoading(false);
+          setVerifyingPayment(false);
+        }
+      });
+
+      handler.openIframe();
 
     } catch (err: any) {
       console.error('Funding Error:', err);
       alert(err.message || 'Failed to initialize funding. Please try again.');
-    } finally {
       setFundingLoading(false);
     }
   };
@@ -275,19 +335,26 @@ const Dashboard: React.FC = () => {
                     <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl flex gap-3">
                       <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">info</span>
                       <p className="text-xs text-blue-800 dark:text-blue-300">
-                        You will be redirected to Paystack to complete the payment securely. Your wallet will be credited automatically upon success.
+                        {verifyingPayment
+                          ? 'Payment successful! Verifying transaction...'
+                          : 'A secure payment popup will open. Your wallet will be credited automatically upon success.'}
                       </p>
                     </div>
 
                     <button
                       type="submit"
-                      disabled={fundingLoading}
+                      disabled={fundingLoading || verifyingPayment}
                       className="w-full bg-primary hover:bg-primary/90 text-zinc-900 font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
                     >
-                      {fundingLoading ? (
+                      {verifyingPayment ? (
                         <>
                           <span className="material-symbols-outlined animate-spin">refresh</span>
-                          Initializing...
+                          Verifying Payment...
+                        </>
+                      ) : fundingLoading ? (
+                        <>
+                          <span className="material-symbols-outlined animate-spin">refresh</span>
+                          Opening Payment...
                         </>
                       ) : (
                         <>

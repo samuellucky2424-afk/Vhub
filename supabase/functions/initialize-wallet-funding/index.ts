@@ -41,7 +41,7 @@ serve(async (req) => {
         const amountKobo = Math.round(amount * 100);
         const reference = `fund_${user.id}_${Date.now()}`;
 
-        // 3. Initialize Paystack Transaction
+        // 3. Initialize Paystack Transaction (for inline popup)
         const paystackResponse = await fetch('https://api.paystack.co/transaction/initialize', {
             method: 'POST',
             headers: {
@@ -52,7 +52,6 @@ serve(async (req) => {
                 email,
                 amount: amountKobo,
                 reference,
-                callback_url: `${req.headers.get('origin')}/#/wallet/success`, // Redirect to success page (Hash router)
                 metadata: {
                     type: 'wallet_funding',
                     user_id: user.id,
@@ -75,9 +74,8 @@ serve(async (req) => {
 
         return new Response(JSON.stringify({
             success: true,
-            authorization_url: paystackData.data.authorization_url,
-            access_code: paystackData.data.access_code,
-            reference: paystackData.data.reference
+            reference: paystackData.data.reference,
+            access_code: paystackData.data.access_code
         }), {
             headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         });
