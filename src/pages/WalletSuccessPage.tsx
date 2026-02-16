@@ -12,7 +12,7 @@ const WalletSuccessPage: React.FC = () => {
     const reference = searchParams.get('reference') || searchParams.get('trxref');
 
     const [userCheckAttempts, setUserCheckAttempts] = useState(0);
-    const { user } = useApp();
+    const { user, loading: authLoading } = useApp();
 
     useEffect(() => {
         if (!reference) {
@@ -20,14 +20,18 @@ const WalletSuccessPage: React.FC = () => {
             return;
         }
 
+        // Wait for auth to finish loading before polling
+        if (authLoading) {
+            console.log('WalletSuccess: Waiting for auth to load...');
+            return;
+        }
+
+        console.log('WalletSuccess: Auth loaded, user:', user ? 'authenticated' : 'not authenticated');
+
         let transactionAttempts = 0;
         const maxAttempts = 20; // 30 seconds approx
-        // let found = false; // This variable is no longer used in the updated logic
 
         const checkTransaction = async () => {
-            // If user is not yet loaded, wait a bit (or let the polling continue)
-            // But if RLS prevents read, we won't find it.
-
             const { data, error } = await supabase
                 .from('wallet_transactions')
                 .select('id, amount')
@@ -35,7 +39,7 @@ const WalletSuccessPage: React.FC = () => {
                 .maybeSingle();
 
             if (data) {
-                // found = true; // This variable is no longer used
+                console.log('WalletSuccess: Transaction found!', data);
                 setStatus('success');
                 await fetchWallet();
 
@@ -44,6 +48,7 @@ const WalletSuccessPage: React.FC = () => {
                 }, 3000);
             } else {
                 transactionAttempts++;
+                console.log(`WalletSuccess: Attempt ${transactionAttempts}/${maxAttempts}, no transaction yet`);
                 if (transactionAttempts >= maxAttempts) {
                     setStatus('timeout');
                 } else {
@@ -54,10 +59,8 @@ const WalletSuccessPage: React.FC = () => {
 
         checkTransaction();
 
-        // Cleanup not strictly necessary for simple polling but good practice
-        // return () => { found = true; }; // This cleanup is no longer necessary as 'found' is not used
-        return () => { }; // Empty cleanup function or remove if not needed
-    }, [reference, navigate, fetchWallet, user]); // Added user dependency to re-trigger if user loads late
+        return () => { };
+    }, [reference, navigate, fetchWallet, user, authLoading]); // Added authLoading dependency
 
 
     return (

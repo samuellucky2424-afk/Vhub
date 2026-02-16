@@ -78,7 +78,22 @@ const AppContent: React.FC = () => {
         <Route path="/product/:feature" element={<ProductPage />} />
 
         {/* Protected Routes */}
-        <Route element={isAuthenticated ? <AuthenticatedLayout /> : <Navigate to="/login" replace />}>
+        <Route element={
+          loading ? (
+            <div className="min-h-screen flex items-center justify-center bg-background-light dark:bg-background-dark">
+              <div className="flex flex-col items-center gap-4">
+                <div className="size-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary animate-pulse">
+                  <span className="material-symbols-outlined text-3xl">cell_tower</span>
+                </div>
+                <div className="size-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+              </div>
+            </div>
+          ) : isAuthenticated ? (
+            <AuthenticatedLayout />
+          ) : (
+            <Navigate to="/login" replace />
+          )
+        }>
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/numbers" element={<ActiveNumbers />} />
           <Route path="/store" element={<Store />} />

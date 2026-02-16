@@ -195,6 +195,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
             activeNumbers,
             transactions: [],
             isAuthenticated,
+            loading,
             login,
             logout,
             addNumber,

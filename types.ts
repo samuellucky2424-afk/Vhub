@@ -52,6 +52,7 @@ export interface WalletTransaction {
 }
 
 export interface AppContextType extends AppState {
+  loading: boolean;
   login: (userData?: Partial<User>) => void;
   logout: () => void;
   addNumber: (newNumber: VirtualNumber) => void;
