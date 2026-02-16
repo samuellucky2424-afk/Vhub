@@ -49,8 +49,8 @@ const ActiveNumbers: React.FC = () => {
     };
 
     // Realtime Subscription & Polling Trigger
-    // 1. Trigger polling when activeNumbers updates
     useEffect(() => {
+        // 1. Trigger polling for any pending/active orders that need it
         const triggerPolling = async () => {
             const itemsToPoll = activeNumbers.filter(n =>
                 (n.status === 'Active' || n.status === 'Pending') &&
@@ -71,13 +71,9 @@ const ActiveNumbers: React.FC = () => {
             }
         };
 
-        if (activeNumbers.length > 0) {
-            triggerPolling();
-        }
-    }, [activeNumbers]);
+        triggerPolling();
 
-    // 2. Setup Realtime Subscription (Mount only)
-    useEffect(() => {
+        // 2. Setup Realtime Subscription
         const channel = supabase
             .channel('verifications-channel')
             .on(
@@ -93,17 +89,12 @@ const ActiveNumbers: React.FC = () => {
                     refreshNumbers();
                 }
             )
-            .subscribe((status) => {
-                if (status === 'SUBSCRIBED') {
-                    console.log('Successfully subscribed to verifications channel');
-                }
-            });
+            .subscribe();
 
         return () => {
             supabase.removeChannel(channel);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []); // Run once on mount
+    }, [activeNumbers.length]); // Re-run if number count changes (e.g. new purchase), but not on every refresh to avoid spamming
 
 
     // Helper to get latest log info
