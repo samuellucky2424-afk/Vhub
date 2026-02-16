@@ -59,6 +59,7 @@ serve(async (req) => {
             // We try to fetch first
             try {
                 const EXCHANGE_RATE_API_KEY = Deno.env.get("EXCHANGE_RATE_API_KEY");
+                console.log(`[ExchangeRate] Key present: ${!!EXCHANGE_RATE_API_KEY}`);
                 if (!EXCHANGE_RATE_API_KEY) throw new Error("Missing Exchange Rate API Key");
 
                 const response = await fetch(`https://v6.exchangerate-api.com/v6/${EXCHANGE_RATE_API_KEY}/latest/USD`);
@@ -103,19 +104,6 @@ serve(async (req) => {
             const rawUSD = parseFloat(smspoolData.price);
             let sellingUSD = rawUSD * 1.45; // 45% markup (Requested Change)
             let finalNGN = sellingUSD * USD_TO_NGN_RATE;
-
-            // FIXED PRICE OVERRIDE: US (1) + WhatsApp (1012) = ₦2,400 (Optional: Keep or Logic Check?)
-            // If user wants dynamic everywhere, we might want to remove this override too. 
-            // "IT SHOULD NO LONGER USE THE 1650 CURRENCY RATE IT SHOULD BE USING FROM THE API"
-            // I will keep the override ONLY if it was a specific business rule unrelated to rate, 
-            // but usually overrides specific NGN amounts imply a fixed rate assumption.
-            // I will comment it out or remove it to be safe and fully dynamic as requested.
-            /*
-            if (country === '1' && service === '1012') {
-                finalNGN = 2400;
-                sellingUSD = finalNGN / USD_TO_NGN_RATE;
-            }
-            */
 
             // Round to nearest whole number for NGN
             const roundedNGN = Math.round(finalNGN);
