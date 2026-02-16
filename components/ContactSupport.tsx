@@ -37,14 +37,14 @@ const ContactSupport: React.FC = () => {
                     <span className="font-bold text-slate-900 dark:text-slate-200">Processing Errors:</span> If you do not receive a code for the number you purchased, please request another code for the same service.
                 </p>
 
-                <p>
+                <div className="mb-4">
                     <span className="font-bold text-slate-900 dark:text-slate-200">Refund Policy (24 Hours):</span> If you have not received a code after 24 hours, please contact support immediately for a refund. You must provide your:
                     <ul className="list-disc list-inside mt-2 ml-2 space-y-1 text-gray-600 dark:text-gray-400">
                         <li>Payment Reference ID</li>
                         <li>Amount Paid</li>
                         <li>Phone Number Purchased</li>
                     </ul>
-                </p>
+                </div>
 
                 <p>
                     <span className="font-bold text-slate-900 dark:text-slate-200">Report Issues:</span> If you encounter any error, please report it immediately to the support center so we can solve the issue. Your feedback helps us enhance the website.
