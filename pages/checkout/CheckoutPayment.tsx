@@ -49,11 +49,10 @@ const CheckoutPayment: React.FC = () => {
     const safeAmountNGN = Number(amountNGN) || 0;
 
     // Calculate final amount in NGN
-    // If we have a direct amountNGN from state, use it. Otherwise calculate from price.
-    // Fallback scheme: State Price -> 0
-    const calculatedAmountNGN = safeAmountNGN > 0
-        ? safeAmountNGN
-        : Math.ceil(safePrice * 1.9 * (Number(import.meta.env.VITE_USD_TO_NGN_RATE) || 1650));
+    // If we have a direct amountNGN from state, use it. 
+    // If not, we cannot safely calculate it without the dynamic rate here.
+    // It is safer to show error or 0 than use a wrong hardcoded rate.
+    const calculatedAmountNGN = safeAmountNGN > 0 ? safeAmountNGN : 0;
 
     const finalAmountNGN = calculatedAmountNGN > 0 ? calculatedAmountNGN : 0;
 

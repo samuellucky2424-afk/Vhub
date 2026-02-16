@@ -137,8 +137,13 @@ const CheckoutSummary: React.FC = () => {
                         setPriceNGN(data.final_ngn);
                         setPrice(data.selling_usd || (data.price ? parseFloat(data.price) : 0));
                     } else if (data.price) {
+                        // If API returns price but no final_ngn (should not happen with new backend),
+                        // we should probably warn or show error, but better to show 0 or loading 
+                        // than wrong price. 
+                        console.warn('Backend did not return final_ngn. Pricing might be outdated.');
                         setPrice(parseFloat(data.price));
-                        setPriceNGN(Math.ceil(parseFloat(data.price) * 1650));
+                        // Fallback to 0 to prevent user checkout with invalid price
+                        setPriceNGN(0);
                     }
                 } else {
                     console.warn('No price in response:', data);

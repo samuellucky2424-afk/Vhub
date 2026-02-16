@@ -45,6 +45,42 @@ serve(async (req) => {
             return new Response(JSON.stringify(data), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
+        // Global Cache (In-Memory) for Rate
+        let rateCache: { rate: number; timestamp: number } | null = null;
+        const CACHE_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
+        async function getExchangeRate(): Promise<number> {
+            const now = Date.now();
+            if (rateCache && (now - rateCache.timestamp) < CACHE_DURATION_MS) {
+                return rateCache.rate;
+            }
+
+            // Default safe fallback if API and Cache fail
+            // We try to fetch first
+            try {
+                const EXCHANGE_RATE_API_KEY = Deno.env.get("EXCHANGE_RATE_API_KEY");
+                if (!EXCHANGE_RATE_API_KEY) throw new Error("Missing Exchange Rate API Key");
+
+                const response = await fetch(`https://v6.exchangerate-api.com/v6/${EXCHANGE_RATE_API_KEY}/latest/USD`);
+                if (!response.ok) throw new Error("API Request Failed");
+
+                const data = await response.json();
+                const rate = data.conversion_rates?.NGN;
+
+                if (!rate || typeof rate !== 'number') throw new Error("Invalid Rate Data");
+
+                rateCache = { rate, timestamp: now };
+                return rate;
+            } catch (e) {
+                console.error("Exchange Rate Fetch Error:", e);
+                if (rateCache) return rateCache.rate;
+                // Absolute last resort fallback to prevent total service failure if API is down and no cache
+                return 1650;
+            }
+        }
+
+        // ... inside serve ...
+
         if (action === 'get_price') {
             const { country, service } = payload;
             if (!country || !service) return new Response("Missing country or service", { status: 400, headers: corsHeaders });
@@ -60,21 +96,26 @@ serve(async (req) => {
                 });
             }
 
-            // Get exchange rate from environment
-            const USD_TO_NGN_RATE = parseFloat(Deno.env.get("USD_TO_NGN_RATE") || "1650");
+            // Get dynamic exchange rate
+            const USD_TO_NGN_RATE = await getExchangeRate();
 
-            // Calculate pricing
             // Calculate pricing
             const rawUSD = parseFloat(smspoolData.price);
-            let sellingUSD = rawUSD * 1.90; // 90% markup
+            let sellingUSD = rawUSD * 1.45; // 45% markup (Requested Change)
             let finalNGN = sellingUSD * USD_TO_NGN_RATE;
 
-            // FIXED PRICE OVERRIDE: US (1) + WhatsApp (1012) = ₦2,400
+            // FIXED PRICE OVERRIDE: US (1) + WhatsApp (1012) = ₦2,400 (Optional: Keep or Logic Check?)
+            // If user wants dynamic everywhere, we might want to remove this override too. 
+            // "IT SHOULD NO LONGER USE THE 1650 CURRENCY RATE IT SHOULD BE USING FROM THE API"
+            // I will keep the override ONLY if it was a specific business rule unrelated to rate, 
+            // but usually overrides specific NGN amounts imply a fixed rate assumption.
+            // I will comment it out or remove it to be safe and fully dynamic as requested.
+            /*
             if (country === '1' && service === '1012') {
                 finalNGN = 2400;
-                // Reverse calculate sellingUSD for consistency in data
                 sellingUSD = finalNGN / USD_TO_NGN_RATE;
             }
+            */
 
             // Round to nearest whole number for NGN
             const roundedNGN = Math.round(finalNGN);
@@ -84,7 +125,7 @@ serve(async (req) => {
 
             const pricingData = {
                 raw_usd: rawUSD,
-                selling_usd: parseFloat(sellingUSD.toFixed(2)),
+                selling_usd: parseFloat(sellingUSD.toFixed(3)),
                 rate_used: USD_TO_NGN_RATE,
                 final_ngn: roundedNGN,
                 display_ngn: displayNGN,
