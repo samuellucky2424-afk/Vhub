@@ -75,11 +75,7 @@ const CheckoutSummary: React.FC = () => {
                     }
                 }
             } catch (err: any) {
-                if (err.name === 'AbortError') {
-                    console.log('Metadata fetch aborted');
-                } else {
-                    console.error('Error fetching metadata:', err);
-                }
+                // Silent catch
             }
         };
         fetchMetadata();
@@ -96,7 +92,6 @@ const CheckoutSummary: React.FC = () => {
             setPrice(0);
 
             try {
-                console.log('Fetching price for country:', selectedCountry, 'service:', selectedService);
                 // Use direct fetch with Anon Key to avoid 401 issues with User Token
                 const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/smspool-service`;
 
@@ -125,28 +120,10 @@ const CheckoutSummary: React.FC = () => {
 
                 if (!active) return;
 
-                if (error) {
-                    console.error('Price fetch error:', error);
-                    return;
-                }
-
-                console.log('Price response:', data);
-
-                if (data && (data.price || data.final_ngn || data.selling_usd)) {
-                    if (data.final_ngn) {
-                        setPriceNGN(data.final_ngn);
-                        setPrice(data.selling_usd || (data.price ? parseFloat(data.price) : 0));
-                    } else if (data.price) {
-                        // If API returns price but no final_ngn (should not happen with new backend),
-                        // we should probably warn or show error, but better to show 0 or loading 
-                        // than wrong price. 
-                        console.warn('Backend did not return final_ngn. Pricing might be outdated.');
-                        setPrice(parseFloat(data.price));
-                        // Fallback to 0 to prevent user checkout with invalid price
-                        setPriceNGN(0);
-                    }
+                if (data && data.final_ngn) {
+                    setPriceNGN(data.final_ngn);
+                    setPrice(0); // USD price not returned by backend anymore
                 } else {
-                    console.warn('No price in response:', data);
                     setPriceNGN(0);
                 }
             } catch (err: any) {
@@ -271,7 +248,6 @@ const CheckoutSummary: React.FC = () => {
                                     </span>
                                     <span className="text-sm font-bold text-slate-400">NGN</span>
                                 </div>
-                                <p className="text-xs text-slate-400 mt-1">Approx. ${price.toFixed(2)} USD</p>
                             </div>
                             <div className="bg-primary/10 text-primary p-2 rounded-lg">
                                 <span className="material-symbols-outlined">receipt_long</span>
@@ -291,7 +267,7 @@ const CheckoutSummary: React.FC = () => {
 
                         <button
                             onClick={handleProceed}
-                            disabled={isLoading || price <= 0}
+                            disabled={isLoading || priceNGN <= 0}
                             className="w-full bg-primary hover:bg-primary/90 text-white font-bold py-4 rounded-xl shadow-lg shadow-primary/25 transition-all flex items-center justify-center gap-2 group active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             Continue to Payment

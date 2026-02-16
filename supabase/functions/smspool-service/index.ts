@@ -117,17 +117,9 @@ serve(async (req) => {
             const displayNGN = `₦${roundedNGN.toLocaleString()}`;
 
             const pricingData = {
-                raw_usd: rawUSD,
-                selling_usd: parseFloat(sellingUSD.toFixed(3)),
-                rate_used: USD_TO_NGN_RATE,
                 final_ngn: roundedNGN,
-                display_ngn: displayNGN,
-                // Include original SMSPool data for reference
-                success_rate: smspoolData.success_rate,
-                high_price: smspoolData.high_price
+                display_ngn: displayNGN
             };
-
-            console.log('Pricing calculated:', pricingData);
 
             return new Response(JSON.stringify(pricingData), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
