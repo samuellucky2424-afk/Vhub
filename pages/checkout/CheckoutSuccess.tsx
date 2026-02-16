@@ -27,6 +27,7 @@ const CheckoutSuccess: React.FC = () => {
 
         const fetchOrder = async () => {
             try {
+                // Fetch Order
                 const { data: order, error: fetchError } = await supabase
                     .from('orders')
                     .select('*')
@@ -34,6 +35,21 @@ const CheckoutSuccess: React.FC = () => {
                     .single();
 
                 if (fetchError) throw fetchError;
+
+                // Check Verifications table for this order
+                const { data: verification } = await supabase
+                    .from('verifications')
+                    .select('otp_code')
+                    .eq('order_id', order.id)
+                    .single();
+
+                // If verification exists and is not pending, use it
+                if (verification && verification.otp_code && verification.otp_code !== 'PENDING') {
+                    setPhoneNumber(order.metadata?.phonenumber || order.metadata?.number);
+                    setLoading(false);
+                    refreshNumbers();
+                    return;
+                }
 
                 if (order?.metadata?.phonenumber) {
                     setPhoneNumber(order.metadata.phonenumber);

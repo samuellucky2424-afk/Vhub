@@ -1,54 +1,68 @@
-const https = require('https');
+const { createClient } = require('@supabase/supabase-js');
 
-const apiKey = 'hL7noSdy86GcFPFn0xNuAIGrb8dNpkKk';
-const orderId = 'BEYYI7BY'; // From previous DB check
+const SUPABASE_URL = 'https://msbthxbmpwskializgaa.supabase.co';
+const SUPABASE_SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1zYnRoeGJtcHdza2lhbGl6Z2FhIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc3MDA1MjUzOCwiZXhwIjoyMDg1NjI4NTM4fQ.gWpP_3XZEPy1zw4a9iJWJEh0BKqbVPhOH4bP9uUUpLg';
 
-function fetchData(url) {
-    return new Promise((resolve, reject) => {
-        console.log("Fetching URL:", url.replace(apiKey, "HIDDEN_KEY"));
-        const req = https.get(url, (res) => {
-            let data = '';
-            res.on('data', (chunk) => data += chunk);
-            res.on('end', () => {
-                try {
-                    console.log("Response received, parsing JSON...");
-                    resolve(JSON.parse(data));
-                } catch (e) {
-                    console.error("JSON Parse Error:", e);
-                    console.log("Raw Data:", data);
-                    reject(e);
-                }
-            });
-        });
-        req.on('error', (e) => {
-            console.error("Request Error:", e);
-            reject(e);
-        });
-    });
-}
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-async function run() {
-    try {
-        console.log(`Checking Order ${orderId}...`);
-        const checkUrl = `https://api.smspool.net/sms/check?key=${apiKey}&orderid=${orderId}`;
-        const checkData = await fetchData(checkUrl);
-        console.log("Check Data:", JSON.stringify(checkData, null, 2));
+async function debugOrder() {
+    const orderId = 'e51df094-4bc4-45a2-85a0-624cdfb07c29'; // From user JSON
 
-        console.log("\nFetching Active Orders...");
-        const activeUrl = `https://api.smspool.net/request/active?key=${apiKey}`;
-        const activeData = await fetchData(activeUrl);
-        console.log("Active Orders Count:", Array.isArray(activeData) ? activeData.length : 'Not Array');
-        if (Array.isArray(activeData)) {
-            const found = activeData.find(o => o.order_id === orderId);
-            console.log("Found in Active List?", found ? "YES" : "NO");
-            if (found) console.log("Active Entry:", found);
-        } else {
-            console.log("Active Data:", activeData);
-        }
+    console.log(`Checking order ${orderId}...`);
 
-    } catch (error) {
-        console.error("Error:", error);
+    // 1. Check current state in DB
+    const { data: order, error } = await supabase
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .single();
+
+    if (error) {
+        console.error('Error fetching order:', error);
+        return;
     }
+    console.log('Current Order State:', {
+        id: order.id,
+        request_id: order.request_id,
+        payment_status: order.payment_status,
+        sms_code: order.sms_code,
+        metadata_sms: order.metadata?.sms_code
+    });
+
+    const { data: verification } = await supabase
+        .from('verifications')
+        .select('*')
+        .eq('order_id', orderId)
+        .single();
+
+    console.log('Current Verification State:', verification);
+
+    // 2. Invoke check_order to force update
+    console.log('\nInvoking smspool-service: check_order...');
+    // We can't invoke function directly from node script easily without fetch, so we'll use fetch
+    // But we need the ANON key or SERVICE role key.
+    // Let's use fetch.
+
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/smspool-service`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
+        },
+        body: JSON.stringify({ action: 'check_sms' })
+    });
+
+    const result = await response.json();
+    console.log('Function Result:', JSON.stringify(result, null, 2));
+
+    // 3. Check DB again to see if it updated
+    const { data: updatedVerification } = await supabase
+        .from('verifications')
+        .select('*')
+        .eq('order_id', orderId)
+        .single();
+
+    console.log('Updated Verification State:', updatedVerification);
 }
 
-run();
+debugOrder();

@@ -15,14 +15,25 @@ create table if not exists public.orders (
 alter table public.orders enable row level security;
 
 -- Policy: Users can see only their own orders
-create policy "Users can view own orders"
-  on public.orders for select
-  using (auth.uid() = user_id);
+-- Policy: Users can see only their own orders
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'orders' and policyname = 'Users can view own orders') then
+    create policy "Users can view own orders"
+      on public.orders for select
+      using (auth.uid() = user_id);
+  end if;
+end $$;
 
 -- Policy: Users can insert their own orders (for initial creation)
-create policy "Users can insert own orders"
-  on public.orders for insert
-  with check (auth.uid() = user_id);
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'orders' and policyname = 'Users can insert own orders') then
+    create policy "Users can insert own orders"
+      on public.orders for insert
+      with check (auth.uid() = user_id);
+  end if;
+end $$;
 
 -- Policy: Service Role can do everything (for webhooks)
 -- Note: Service role bypasses RLS by default, but good to be explicit if needed or for testing with non-service role admins.

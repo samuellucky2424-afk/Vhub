@@ -102,7 +102,7 @@ serve(async (req) => {
 
         if (action === 'purchase') {
             // Existing purchase logic
-            const { order_id, service_type } = payload; // or pass country/service explicitly
+            const { order_id, service_type, user_id } = payload; // or pass country/service explicitly
 
             // We might need mapping from Paystack webhook which calls this.
             // If this is called from Frontend (not recommended for purchase directly?), proceed.
@@ -115,7 +115,7 @@ serve(async (req) => {
 
             // We need country too. If it's stored in order metadata, we should fetch it from DB.
             // Fetch order first to get country?
-            const { data: order } = await supabase.from('orders').select('metadata').eq('id', order_id).single();
+            const { data: order } = await supabase.from('orders').select('metadata, user_id').eq('id', order_id).single();
             const countryId = order?.metadata?.countryId || '1'; // Default US if missing
             const serviceId = order?.metadata?.serviceId || service_type; // Use ID if available
 
@@ -147,6 +147,25 @@ serve(async (req) => {
                     }
                 })
                 .eq("id", order_id);
+
+            // Create initial Verification row
+            const { error: verificationError } = await supabase
+                .from("verifications")
+                .insert({
+                    order_id: order_id,
+                    user_id: user_id || order?.user_id, // Ensure we have user_id
+                    service_name: service_type || order?.metadata?.service_name || "Unknown Service",
+                    smspool_service_id: serviceId,
+                    country_name: order?.metadata?.country || "Unknown Country",
+                    smspool_country_id: countryId,
+                    smspool_order_id: smsPoolOrderId,
+                    phone_number: phoneNumber,
+                    otp_code: "PENDING",
+                    full_sms: "Waiting for SMS...",
+                    received_at: new Date().toISOString()
+                });
+
+            if (verificationError) console.error("Verification Insert Error", verificationError);
 
             if (updateError) console.error("Update Error", updateError);
 
@@ -217,6 +236,16 @@ serve(async (req) => {
                                 .update({ metadata: updatedMetadata, sms_code: code })
                                 .eq('id', localOrder.id);
 
+                            // Update Verifications
+                            await supabase
+                                .from('verifications')
+                                .update({
+                                    otp_code: code,
+                                    full_sms: poolOrder.full_sms || code,
+                                    received_at: new Date().toISOString()
+                                })
+                                .eq('order_id', localOrder.id);
+
                             updates.push({ order_id: localOrder.id, status: 'Active', code: code });
                             log(`Updated active order ${localOrder.id} with new code: ${code}`);
                         }
@@ -284,6 +313,18 @@ serve(async (req) => {
                             if (updateError) {
                                 log(`Failed to update order ${localOrder.id}: ${updateError.message}`);
                             } else {
+                                // If we have a new SMS code, update verifications
+                                if (newMetadata.sms_code && newMetadata.sms_code !== localOrder.sms_code) {
+                                    await supabase
+                                        .from('verifications')
+                                        .update({
+                                            otp_code: newMetadata.sms_code,
+                                            full_sms: checkData.full_sms || newMetadata.sms_code,
+                                            received_at: new Date().toISOString()
+                                        })
+                                        .eq('order_id', localOrder.id);
+                                }
+
                                 updates.push({ order_id: localOrder.id, status: newStatus });
                                 log(`Updated order ${localOrder.id} to ${newStatus}`);
                             }
@@ -353,20 +394,20 @@ serve(async (req) => {
                 }
             }
 
-            // 3. Insert into 'verifications' if code found
+            // 3. Update 'verifications' if code found
             if (foundCode) {
                 const { error: insertError } = await supabase
                     .from('verifications')
-                    .insert({
-                        order_id: order_id,
+                    .update({
                         otp_code: foundCode,
-                        full_sms: fullSmsText,
+                        full_sms: fullSmsText || foundCode,
                         received_at: new Date().toISOString()
-                    });
+                    })
+                    .eq('order_id', order_id);
 
                 if (insertError) {
-                    log(`Error inserting verification: ${insertError.message}`);
-                    return new Response(JSON.stringify({ success: false, message: "Failed to save verifications", error: insertError }), {
+                    log(`Error updating verification: ${insertError.message}`);
+                    return new Response(JSON.stringify({ success: false, message: "Failed to update verifications", error: insertError }), {
                         status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" }
                     });
                 } else {
@@ -435,6 +476,16 @@ serve(async (req) => {
                         receivedAt: new Date().toISOString()
                     };
                     updates.metadata.logs = [newLog, ...(order.metadata?.logs || [])];
+
+                    // Update Verifications
+                    await supabase
+                        .from('verifications')
+                        .update({
+                            otp_code: data.sms,
+                            full_sms: data.full_sms || data.sms,
+                            received_at: new Date().toISOString()
+                        })
+                        .eq('order_id', order_id);
                 }
             }
 

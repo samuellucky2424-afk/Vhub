@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AppContextType, VirtualNumber, User } from './types';
 import { INITIAL_NUMBERS, MOCK_USER } from './constants';
+import { HelmetProvider } from 'react-helmet-async';
 
 // Pages
 import LandingPage from './pages/LandingPage';
@@ -197,39 +198,41 @@ const App: React.FC = () => {
       deductBalance,
       refreshNumbers
     }}>
-      <Router>
-        <ScrollToTop />
-        <Routes>
-          {/* Public Routes */}
-          <Route path="/" element={<LandingPage />} />
-          <Route path="/login" element={<LoginPage />} />
-          <Route path="/signup" element={<SignUpPage />} />
-          <Route path="/test-verification" element={<VerificationDisplay orderId="test-preview-id" />} />
+      <HelmetProvider>
+        <Router>
+          <ScrollToTop />
+          <Routes>
+            {/* Public Routes */}
+            <Route path="/" element={<LandingPage />} />
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/signup" element={<SignUpPage />} />
+            <Route path="/test-verification" element={<VerificationDisplay orderId="test-preview-id" />} />
 
-          {/* Footer / Info Routes */}
-          <Route path="/pricing" element={<PricingPage />} />
-          <Route path="/api" element={<APIPage />} />
-          <Route path="/help" element={<HelpPage />} />
-          <Route path="/blog" element={<BlogPage />} />
-          <Route path="/legal/:section" element={<LegalPage />} />
-          <Route path="/product/:feature" element={<ProductPage />} />
+            {/* Footer / Info Routes */}
+            <Route path="/pricing" element={<PricingPage />} />
+            <Route path="/api" element={<APIPage />} />
+            <Route path="/help" element={<HelpPage />} />
+            <Route path="/blog" element={<BlogPage />} />
+            <Route path="/legal/:section" element={<LegalPage />} />
+            <Route path="/product/:feature" element={<ProductPage />} />
 
-          {/* Protected Routes */}
-          <Route element={isAuthenticated ? <AuthenticatedLayout /> : <Navigate to="/login" replace />}>
-            <Route path="/dashboard" element={<Dashboard />} />
-            <Route path="/numbers" element={<ActiveNumbers />} />
-            <Route path="/store" element={<Store />} />
+            {/* Protected Routes */}
+            <Route element={isAuthenticated ? <AuthenticatedLayout /> : <Navigate to="/login" replace />}>
+              <Route path="/dashboard" element={<Dashboard />} />
+              <Route path="/numbers" element={<ActiveNumbers />} />
+              <Route path="/store" element={<Store />} />
 
-            {/* Checkout Flow */}
-            <Route path="/checkout/summary" element={<CheckoutSummary />} />
-            <Route path="/checkout/payment" element={<CheckoutPayment />} />
-            <Route path="/checkout/success" element={<CheckoutSuccess />} />
-          </Route>
+              {/* Checkout Flow */}
+              <Route path="/checkout/summary" element={<CheckoutSummary />} />
+              <Route path="/checkout/payment" element={<CheckoutPayment />} />
+              <Route path="/checkout/success" element={<CheckoutSuccess />} />
+            </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Router>
-    </AppContext.Provider>
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Router>
+      </HelmetProvider>
+    </AppContext.Provider >
   );
 };
 
