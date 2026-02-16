@@ -59,7 +59,57 @@ serve(async (req) => {
         if (event.event === "charge.success") {
             const { reference, metadata } = event.data;
 
-            console.log(`Processing Order: ${reference}`);
+            console.log(`Processing Transaction: ${reference}`);
+
+            // CHECK FOR WALLET FUNDING
+            if (reference.startsWith('fund_') || metadata?.type === 'wallet_funding') {
+                console.log(`[LOG] Wallet Funding Detected: ${reference}`);
+
+                const userId = metadata?.user_id;
+                const amountNGN = event.data.amount / 100;
+
+                if (!userId) {
+                    console.error('Missing user_id in metadata for wallet funding');
+                    return new Response("Missing user_id", { status: 400 });
+                }
+
+                // Call credit_wallet RPC
+                const { data: creditResult, error: creditError } = await supabase.rpc('credit_wallet', {
+                    p_user_id: userId,
+                    p_amount: amountNGN,
+                    p_reference: reference,
+                    p_metadata: {
+                        source: 'paystack',
+                        paystack_reference: reference,
+                        description: `Wallet funding via Paystack`
+                    }
+                });
+
+                if (creditError) {
+                    console.error('Credit Wallet RPC Error:', creditError);
+                    // If duplicate, it's fine
+                    if (creditError.message.includes('Transaction already processed')) {
+                        return new Response("Duplicate transaction", { status: 200 });
+                    }
+                    return new Response("Wallet credit failed", { status: 500 });
+                }
+
+                if (creditResult && !creditResult.success) {
+                    // Handled within RPC but just in case
+                    if (creditResult.message === 'Transaction already processed') {
+                        return new Response("Duplicate transaction", { status: 200 });
+                    }
+                    console.error('Credit Wallet Failed:', creditResult);
+                    return new Response(creditResult.message || "Wallet credit failed", { status: 500 });
+                }
+
+                console.log(`[LOG] Wallet Credited Successfully: ${userId} +${amountNGN}`);
+                return new Response("Wallet funded", { status: 200 });
+            }
+
+            // EXISTING ORDER PROCESSING LOGIC
+            // Fetch Order details first... (Logic for orders)
+            console.log(`Processing Order Payment: ${reference}`);
 
             // Fetch Order details first to validate amount
             const { data: order, error: fetchError } = await supabase
@@ -67,6 +117,9 @@ serve(async (req) => {
                 .select("*")
                 .eq("payment_reference", reference)
                 .single();
+
+            // ... (rest of existing order logic) ...
+
 
             if (fetchError || !order) {
                 console.error("Order fetch failed. Reference:", reference);

@@ -126,6 +126,131 @@ serve(async (req) => {
             });
         }
 
+        // --- NEW: Wallet Purchase Action ---
+        if (action === 'purchase_wallet') {
+            // 1. Authenticate User
+            const authHeader = req.headers.get('Authorization');
+            if (!authHeader) return new Response("Missing Authorization Header", { status: 401, headers: corsHeaders });
+
+            const token = authHeader.replace('Bearer ', '');
+            const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+
+            if (authError || !user) {
+                return new Response("Invalid User Token", { status: 401, headers: corsHeaders });
+            }
+
+            const { service_type, country, service_id, country_id } = payload;
+            if (!service_type || !country) return new Response("Missing service or country", { status: 400, headers: corsHeaders });
+
+            // 2. Get live pricing
+            const priceResp = await fetch(`https://api.smspool.net/request/price?key=${SMSPOOL_API_KEY}&country=${country_id || country}&service=${service_id || service_type}`);
+            const priceData = await priceResp.json();
+
+            if (!priceData.price) return new Response(JSON.stringify({ success: false, message: "Service unavailable or no price" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+            // Ensure getExchangeRate is defined in scope or call checking logic
+            // Note: In previous file content, getExchangeRate was defined inside serve.
+            const USD_TO_NGN_RATE = await getExchangeRate();
+            const rawUSD = parseFloat(priceData.price);
+            const markup = 1.45;
+            const price_usd = rawUSD * markup;
+            const price_ngn = Math.round(price_usd * USD_TO_NGN_RATE);
+
+            console.log(`[Wallet] Purchasing ${service_type} for User ${user.id}. Cost: ₦${price_ngn}`);
+
+            // 3. Call process_purchase RPC (Atomic Deduction + Order)
+            const { data: purchaseResult, error: rpcError } = await supabase.rpc('process_purchase', {
+                p_user_id: user.id,
+                p_service_type: service_type,
+                p_country: country,
+                p_price_ngn: price_ngn,
+                p_price_usd: price_usd,
+                p_metadata: {
+                    countryId: country_id,
+                    serviceId: service_id,
+                    source: 'wallet',
+                    raw_usd: rawUSD,
+                    rate: USD_TO_NGN_RATE
+                }
+            });
+
+            if (rpcError) {
+                console.error("RPC Error:", rpcError);
+                return new Response(JSON.stringify({ success: false, message: "Transaction failed", error: rpcError.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            if (!purchaseResult.success) {
+                return new Response(JSON.stringify({ success: false, message: purchaseResult.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            const orderId = purchaseResult.order_id;
+            console.log(`[Wallet] Deduction success. Order ID: ${orderId}. Calling SMSPool...`);
+
+            // 4. Call SMSPool Purchase
+            try {
+                const poolUrl = `https://api.smspool.net/purchase/sms?key=${SMSPOOL_API_KEY}&country=${country_id}&service=${service_id}`;
+                const poolResp = await fetch(poolUrl);
+                const poolData = await poolResp.json();
+
+                if (poolData.success === 1 || (poolData.number && !poolData.error)) {
+                    // Success!
+                    const phoneNumber = poolData.number || poolData.phonenumber;
+                    const smsPoolOrderId = poolData.order_id;
+
+                    // Update Order and Insert Verification
+                    await supabase.from('orders').update({
+                        payment_status: 'pending', // Waiting for OTP
+                        request_id: smsPoolOrderId.toString(),
+                        sms_code: null,
+                        metadata: {
+                            ...poolData,
+                            phonenumber: phoneNumber,
+                            smspool_order_id: smsPoolOrderId,
+                            status: 'waiting_otp'
+                        }
+                    }).eq('id', orderId);
+
+                    await supabase.from('verifications').insert({
+                        order_id: orderId,
+                        user_id: user.id,
+                        service_name: service_type,
+                        smspool_service_id: service_id,
+                        country_name: country,
+                        smspool_country_id: country_id,
+                        smspool_order_id: smsPoolOrderId,
+                        phone_number: phoneNumber,
+                        otp_code: "PENDING",
+                        full_sms: "Waiting for SMS...",
+                        received_at: new Date().toISOString()
+                    });
+
+                    return new Response(JSON.stringify({
+                        success: true,
+                        order_id: orderId,
+                        number: phoneNumber,
+                        message: "Number purchased successfully"
+                    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
+                } else {
+                    throw new Error(poolData.message || "SMSPool purchase failed");
+                }
+
+            } catch (poolError) {
+                console.error("SMSPool Purchase Failed:", poolError);
+
+                // 5. Refund Logic
+                const { data: refundResult, error: refundError } = await supabase.rpc('process_order_refund', {
+                    p_order_id: orderId
+                });
+
+                return new Response(JSON.stringify({
+                    success: false,
+                    message: `Purchase failed: ${poolError.message}`,
+                    refunded: refundResult?.success
+                }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+        }
+
         if (action === 'purchase') {
             // Existing purchase logic
             const { order_id, service_type, user_id } = payload; // or pass country/service explicitly

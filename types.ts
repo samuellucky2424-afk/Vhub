@@ -34,10 +34,29 @@ export interface AppState {
   isAuthenticated: boolean;
 }
 
+export interface Wallet {
+  id: string;
+  user_id: string;
+  balance: number;
+  currency: string;
+}
+
+export interface WalletTransaction {
+  id: string;
+  wallet_id: string;
+  amount: number;
+  type: 'deposit' | 'purchase' | 'refund' | 'adjustment';
+  reference?: string;
+  description?: string;
+  created_at: string;
+}
+
 export interface AppContextType extends AppState {
   login: (userData?: Partial<User>) => void;
   logout: () => void;
   addNumber: (newNumber: VirtualNumber) => void;
   deductBalance: (amount: number) => void;
   refreshNumbers: () => Promise<void>;
+  wallet: Wallet | null;
+  fetchWallet: () => Promise<void>;
 }

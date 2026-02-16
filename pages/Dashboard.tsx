@@ -1,11 +1,47 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../App';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '../src/lib/supabase';
 
 const Dashboard: React.FC = () => {
   const { user, balance, totalSpent, activeNumbers } = useApp();
   const navigate = useNavigate();
+  const [showFundModal, setShowFundModal] = useState(false);
+  const [fundAmount, setFundAmount] = useState('');
+  const [fundingLoading, setFundingLoading] = useState(false);
+
+  const handleFundWallet = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const amount = Number(fundAmount);
+    if (!amount || amount < 100) {
+      alert('Minimum funding amount is ₦100');
+      return;
+    }
+
+    setFundingLoading(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('initialize-wallet-funding', {
+        body: { amount }
+      });
+
+      if (error) throw error;
+      if (!data.success) throw new Error(data.message || 'Failed to initialize payment');
+
+      // Redirect to Paystack
+      if (data.authorization_url) {
+        window.location.href = data.authorization_url;
+      } else {
+        throw new Error('No authorization URL returned');
+      }
+
+    } catch (err: any) {
+      console.error('Funding Error:', err);
+      alert(err.message || 'Failed to initialize funding. Please try again.');
+    } finally {
+      setFundingLoading(false);
+    }
+  };
 
   const container = {
     hidden: { opacity: 0 },
@@ -23,7 +59,7 @@ const Dashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-y-auto">
+    <div className="flex-1 flex flex-col h-full overflow-y-auto relative">
       {/* Header */}
       <motion.header
         initial={{ y: -50, opacity: 0 }}
@@ -36,13 +72,16 @@ const Dashboard: React.FC = () => {
           <h2 className="text-xl font-bold">Overview</h2>
         </div>
         <div className="flex items-center gap-6">
-          <motion.div
+          <motion.button
             whileHover={{ scale: 1.05 }}
-            className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-full px-4 py-1.5 flex items-center gap-2"
+            whileTap={{ scale: 0.95 }}
+            onClick={() => setShowFundModal(true)}
+            className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-full px-4 py-1.5 flex items-center gap-2 hover:border-primary transition-colors cursor-pointer"
           >
             <span className="text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Balance</span>
-            <span className="text-sm font-bold text-primary">${balance.toFixed(2)}</span>
-          </motion.div>
+            <span className="text-sm font-bold text-primary">₦{balance?.toLocaleString() || '0.00'}</span>
+            <span className="material-symbols-outlined text-primary text-sm bg-primary/10 rounded-full p-0.5">add</span>
+          </motion.button>
           <div className="hidden md:flex items-center gap-3">
             <div className="text-right hidden sm:block">
               <p className="text-sm font-bold leading-none">{user?.name}</p>
@@ -70,7 +109,7 @@ const Dashboard: React.FC = () => {
             <div>
               <p className="text-sm text-slate-500 dark:text-zinc-400 font-medium">Total Spent</p>
               <div className="flex items-baseline gap-2">
-                <h3 className="text-2xl font-bold tracking-tight">${totalSpent.toFixed(2)}</h3>
+                <h3 className="text-2xl font-bold tracking-tight">₦{totalSpent?.toLocaleString() || '0.00'}</h3>
               </div>
             </div>
           </motion.div>
@@ -189,6 +228,81 @@ const Dashboard: React.FC = () => {
           </div>
         </motion.div>
       </motion.div>
+
+      {/* Fund Wallet Modal */}
+      <AnimatePresence>
+        {showFundModal && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowFundModal(false)}
+              className="fixed inset-0 bg-black/50 z-40 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="fixed inset-0 m-auto z-50 w-full max-w-md h-fit p-4"
+            >
+              <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-xl overflow-hidden border border-slate-200 dark:border-zinc-800">
+                <div className="p-6 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between">
+                  <h3 className="text-lg font-bold">Fund Wallet</h3>
+                  <button onClick={() => setShowFundModal(false)} className="size-8 rounded-full hover:bg-slate-100 dark:hover:bg-zinc-800 flex items-center justify-center transition-colors">
+                    <span className="material-symbols-outlined text-xl">close</span>
+                  </button>
+                </div>
+                <div className="p-6">
+                  <form onSubmit={handleFundWallet} className="space-y-6">
+                    <div>
+                      <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Amount (₦)</label>
+                      <div className="relative">
+                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-slate-400">₦</span>
+                        <input
+                          type="number"
+                          value={fundAmount}
+                          onChange={(e) => setFundAmount(e.target.value)}
+                          placeholder="e.g. 5000"
+                          className="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl px-4 pl-8 py-3 font-bold focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
+                          min="100"
+                          required
+                        />
+                      </div>
+                      <p className="text-xs text-slate-500 mt-2">Minimum funding amount is ₦100.</p>
+                    </div>
+
+                    <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl flex gap-3">
+                      <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">info</span>
+                      <p className="text-xs text-blue-800 dark:text-blue-300">
+                        You will be redirected to Paystack to complete the payment securely. Your wallet will be credited automatically upon success.
+                      </p>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={fundingLoading}
+                      className="w-full bg-primary hover:bg-primary/90 text-zinc-900 font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
+                    >
+                      {fundingLoading ? (
+                        <>
+                          <span className="material-symbols-outlined animate-spin">refresh</span>
+                          Initializing...
+                        </>
+                      ) : (
+                        <>
+                          <span className="material-symbols-outlined">account_balance_wallet</span>
+                          Proceed to Payment
+                        </>
+                      )}
+                    </button>
+                  </form>
+                </div>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
