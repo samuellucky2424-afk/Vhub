@@ -14,6 +14,7 @@ import Store from './pages/Store';
 import CheckoutSummary from './pages/checkout/CheckoutSummary';
 import CheckoutPayment from './pages/checkout/CheckoutPayment';
 import CheckoutSuccess from './pages/checkout/CheckoutSuccess';
+import SupportPage from './pages/SupportPage';
 
 // Footer Pages
 import PricingPage from './pages/PricingPage';
@@ -226,6 +227,7 @@ const App: React.FC = () => {
               <Route path="/checkout/summary" element={<CheckoutSummary />} />
               <Route path="/checkout/payment" element={<CheckoutPayment />} />
               <Route path="/checkout/success" element={<CheckoutSuccess />} />
+              <Route path="/support" element={<SupportPage />} />
             </Route>
 
             <Route path="*" element={<Navigate to="/" replace />} />

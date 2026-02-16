@@ -15,6 +15,7 @@ const AuthenticatedLayout: React.FC = () => {
     { path: '/checkout/summary', icon: 'add_shopping_cart', label: 'Buy Numbers' }, // Direct link to buy for convenience
     { path: '/numbers', icon: 'tag', label: 'My Numbers', fill: 1 },
     { path: '/store', icon: 'storefront', label: 'Store' },
+    { path: '/support', icon: 'support_agent', label: 'Support' },
   ];
 
   return (
