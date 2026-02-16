@@ -102,8 +102,13 @@ serve(async (req) => {
 
             // Calculate pricing
             const rawUSD = parseFloat(smspoolData.price);
-            let sellingUSD = rawUSD * 1.45; // 45% markup (Requested Change)
-            let finalNGN = sellingUSD * USD_TO_NGN_RATE;
+            const markup = 1.45;
+
+            // Formula: selling_usd = raw_usd * 1.45
+            const sellingUSD = rawUSD * markup;
+
+            // Formula: final_ngn = selling_usd * exchange_rate
+            const finalNGN = sellingUSD * USD_TO_NGN_RATE;
 
             // Round to nearest whole number for NGN
             const roundedNGN = Math.round(finalNGN);
