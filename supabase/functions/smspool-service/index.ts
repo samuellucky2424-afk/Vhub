@@ -344,7 +344,7 @@ serve(async (req) => {
             const { data: localActiveOrders, error: dbError } = await supabase
                 .from('orders')
                 .select('*')
-                .in('payment_status', ['paid'])
+                .in('payment_status', ['paid', 'pending'])
                 .not('request_id', 'is', null);
 
             if (dbError) {
