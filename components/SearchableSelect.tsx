@@ -75,13 +75,24 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
                 </div>
             );
         }
-        if (opt?.iconUrl) {
-            return <img src={opt.iconUrl} alt={opt.label} className="size-6 md:size-8 object-contain shrink-0" />;
-        }
-        if (opt?.icon) {
-            return <span className="text-2xl shrink-0">{opt.icon}</span>;
-        }
-        return null;
+        if (!opt) return null;
+        // If no icon data at all, show nothing (just the service name)
+        if (!opt.iconUrl && !opt.icon) return null;
+        // Always wrap in a consistent div to prevent React reconciliation mismatches
+        return (
+            <div className="size-6 md:size-8 flex items-center justify-center shrink-0">
+                {opt.iconUrl ? (
+                    <img
+                        src={opt.iconUrl}
+                        alt={opt.label}
+                        className="size-6 md:size-8 object-contain"
+                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                    />
+                ) : (
+                    <span className="material-symbols-outlined text-slate-400 text-lg">{opt.icon}</span>
+                )}
+            </div>
+        );
     };
 
     return (
@@ -155,9 +166,7 @@ const SearchableSelect: React.FC<SearchableSelectProps> = ({
                                             {opt.label}
                                         </p>
                                     </div>
-                                    {value === opt.value && (
-                                        <span className="material-symbols-outlined text-lg shrink-0">check</span>
-                                    )}
+                                    <span className={`material-symbols-outlined text-lg shrink-0 ${value === opt.value ? '' : 'invisible'}`}>check</span>
                                 </div>
                             ))
                         ) : (

@@ -11,39 +11,71 @@ const CheckoutSuccess: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
-    // Get reference from navigation state
+    // Get reference and number from navigation state
     const reference = location.state?.reference;
+    const navNumber = location.state?.number;
 
     useEffect(() => {
+        // If number was already provided (wallet purchase), skip polling
+        if (navNumber) {
+            setPhoneNumber(String(navNumber));
+            setLoading(false);
+            refreshNumbers();
+            return;
+        }
+
         if (!reference) {
-            // If no reference, we can't fetch. Maybe just show success? 
-            // Or redirect? For now, we'll stop loading.
             setLoading(false);
             return;
         }
 
         let attempts = 0;
-        const maxAttempts = 30; // 30 attempts * 2s = 60s timeout
+        const maxAttempts = 30;
 
         const fetchOrder = async () => {
             try {
-                // Fetch Order
-                const { data: order, error: fetchError } = await supabase
+                // Try fetching by id first (wallet purchases), then by payment_reference (Paystack)
+                let order = null;
+                let fetchError = null;
+
+                const { data: byId, error: idErr } = await supabase
                     .from('orders')
                     .select('*')
-                    .eq('payment_reference', reference)
-                    .single();
+                    .eq('id', reference)
+                    .maybeSingle();
 
-                if (fetchError) throw fetchError;
+                if (byId) {
+                    order = byId;
+                } else {
+                    const { data: byRef, error: refErr } = await supabase
+                        .from('orders')
+                        .select('*')
+                        .eq('payment_reference', reference)
+                        .maybeSingle();
+                    order = byRef;
+                    fetchError = refErr;
+                }
+
+                if (!order) {
+                    if (fetchError) throw fetchError;
+                    // Order not found yet, keep polling
+                    attempts++;
+                    if (attempts < maxAttempts) {
+                        setTimeout(fetchOrder, 2000);
+                    } else {
+                        setError('Timeout waiting for number provisioning. Please check "My Numbers".');
+                        setLoading(false);
+                    }
+                    return;
+                }
 
                 // Check Verifications table for this order
                 const { data: verification } = await supabase
                     .from('verifications')
                     .select('otp_code')
                     .eq('order_id', order.id)
-                    .single();
+                    .maybeSingle();
 
-                // If verification exists and is not pending, use it
                 if (verification && verification.otp_code && verification.otp_code !== 'PENDING') {
                     setPhoneNumber(order.metadata?.phonenumber || order.metadata?.number);
                     setLoading(false);
@@ -51,16 +83,14 @@ const CheckoutSuccess: React.FC = () => {
                     return;
                 }
 
-                if (order?.metadata?.phonenumber) {
-                    setPhoneNumber(order.metadata.phonenumber);
+                if (order?.metadata?.phonenumber || order?.metadata?.number) {
+                    setPhoneNumber(order.metadata.phonenumber || String(order.metadata.number));
                     setLoading(false);
-                    // Refresh global state so "My Numbers" is up to date
                     refreshNumbers();
                 } else if (order?.payment_status === 'failed') {
                     setError(order.metadata?.payment_error || 'Payment verification failed');
                     setLoading(false);
                 } else {
-                    // Keep polling
                     attempts++;
                     if (attempts < maxAttempts) {
                         setTimeout(fetchOrder, 2000);
@@ -71,8 +101,6 @@ const CheckoutSuccess: React.FC = () => {
                 }
             } catch (err) {
                 console.error('Error fetching order:', err);
-                // Keep polling on network error? Or stop? 
-                // Let's retry on error too for resilience
                 attempts++;
                 if (attempts < maxAttempts) {
                     setTimeout(fetchOrder, 2000);
@@ -85,11 +113,9 @@ const CheckoutSuccess: React.FC = () => {
         fetchOrder();
 
         return () => {
-            // Cleanup if component unmounts (though standard fetch can't be easily cancelled without abortcontroller, 
-            // this simple pattern is okay for this context)
-            attempts = maxAttempts; // Stop polling
+            attempts = maxAttempts;
         };
-    }, [reference]);
+    }, [reference, navNumber]);
 
     return (
         <div className="flex-1 flex flex-col items-center justify-center py-12 px-4 h-full">

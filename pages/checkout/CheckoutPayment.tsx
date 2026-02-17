@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../../App';
 import { supabase } from '../../src/lib/supabase';
-import { usePaystackPayment } from 'react-paystack';
+import { ServiceLogo } from '../../src/utils/serviceIcons';
+
 
 const CheckoutPayment: React.FC = () => {
     const navigate = useNavigate();
@@ -51,17 +52,39 @@ const CheckoutPayment: React.FC = () => {
         try {
             console.log('Initiating Wallet Purchase:', { service, country, finalAmountNGN });
 
-            const { data, error } = await supabase.functions.invoke('smspool-service', {
-                body: {
+            // Get current session token for user identification
+            const { data: { session } } = await supabase.auth.getSession();
+            if (!session?.access_token) {
+                throw new Error('Not authenticated. Please log in again.');
+            }
+
+            console.log('[CheckoutPayment] Session found, invoking smspool-service...');
+
+            // Use anon key for Edge Function relay auth (same pattern as other pages)
+            // Pass user token in body for the function to verify internally
+            const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/smspool-service`;
+            const response = await fetch(functionUrl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                },
+                body: JSON.stringify({
                     action: 'purchase_wallet',
                     service_type: service,
                     service_id: serviceId,
                     country: country,
-                    country_id: countryId
-                }
+                    country_id: countryId,
+                    user_token: session.access_token
+                })
             });
 
-            if (error) throw error;
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.message || data.error || `Server error: ${response.status}`);
+            }
+
 
             if (!data.success) {
                 // Handle specific error messages if needed
@@ -140,11 +163,7 @@ const CheckoutPayment: React.FC = () => {
                     <div className="p-6 md:p-8 flex flex-col gap-6">
                         <div className="flex flex-col sm:flex-row items-center justify-between p-4 bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-700 shadow-sm gap-4">
                             <div className="flex items-center gap-4 w-full sm:w-auto">
-                                <div className="size-12 rounded-xl bg-primary/10 flex items-center justify-center text-primary shrink-0">
-                                    <span className="material-symbols-outlined text-2xl">
-                                        {service === 'WhatsApp' ? 'chat' : 'public'}
-                                    </span>
-                                </div>
+                                <ServiceLogo serviceName={service} size="lg" />
                                 <div>
                                     <p className="font-bold text-slate-900 dark:text-white">{country} Number</p>
                                     <p className="text-sm text-slate-500">{service} Verification</p>

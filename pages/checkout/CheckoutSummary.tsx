@@ -15,19 +15,7 @@ interface Service {
     name: string;
 }
 
-// Helper to get service icon
-const getServiceIcon = (name: string): string => {
-    const lower = name.toLowerCase();
-    if (lower.includes('whatsapp')) return 'https://upload.wikimedia.org/wikipedia/commons/6/6b/WhatsApp.svg';
-    if (lower.includes('telegram')) return 'https://upload.wikimedia.org/wikipedia/commons/8/82/Telegram_logo.svg';
-    if (lower.includes('google')) return 'https://upload.wikimedia.org/wikipedia/commons/c/c1/Google_%22G%22_logo.svg';
-    if (lower.includes('facebook')) return 'https://upload.wikimedia.org/wikipedia/commons/b/b8/2021_Facebook_icon.svg';
-    if (lower.includes('instagram')) return 'https://upload.wikimedia.org/wikipedia/commons/e/e7/Instagram_logo_2016.svg';
-    if (lower.includes('tiktok')) return 'https://upload.wikimedia.org/wikipedia/commons/3/34/Ionic_Logo_ionic.svg'; // Placeholder or use specialized CDN
-    if (lower.includes('uber')) return 'https://upload.wikimedia.org/wikipedia/commons/c/cc/Uber_logo_2018.png';
-    // Add more as needed or use a generic service
-    return ''; // Return empty to fall back to default icon
-};
+import { getServiceIconUrl as getServiceIcon } from '../../src/utils/serviceIcons';
 
 const CheckoutSummary: React.FC = () => {
     const navigate = useNavigate();
@@ -221,8 +209,7 @@ const CheckoutSummary: React.FC = () => {
                                     return {
                                         value: s.ID.toString(),
                                         label: s.name,
-                                        iconUrl: iconUrl,
-                                        icon: !iconUrl ? 'chat' : undefined, // Fallback icon char if no URL
+                                        iconUrl: iconUrl || undefined,
                                         subtitle: 'High Availability'
                                     };
                                 })}

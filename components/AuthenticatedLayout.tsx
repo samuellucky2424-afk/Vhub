@@ -1,45 +1,36 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Outlet, NavLink, useLocation } from 'react-router-dom';
 import { useApp } from '../App';
 
 const AuthenticatedLayout: React.FC = () => {
   const { logout, user } = useApp();
   const location = useLocation();
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Don't show sidebar for checkout flow or success page, but keep the layout structure
   const isCheckout = location.pathname.includes('/checkout');
 
-  const navItems = [
+  const sidebarNavItems = [
     { path: '/dashboard', icon: 'dashboard', label: 'Dashboard' },
-    { path: '/checkout/summary', icon: 'add_shopping_cart', label: 'Buy Numbers' }, // Direct link to buy for convenience
+    { path: '/checkout/summary', icon: 'add_shopping_cart', label: 'Buy Numbers' },
     { path: '/numbers', icon: 'tag', label: 'My Numbers', fill: 1 },
     { path: '/store', icon: 'storefront', label: 'Store' },
     { path: '/support', icon: 'support_agent', label: 'Support' },
   ];
 
+  const bottomNavItems = [
+    { path: '/dashboard', icon: 'home', label: 'Home' },
+    { path: '/checkout/summary', icon: 'add_shopping_cart', label: 'Buy Number' },
+    { path: '/numbers', icon: 'tag', label: 'My Numbers', fill: 1 },
+    { path: '/support', icon: 'support_agent', label: 'Support' },
+    { path: '/profile', icon: 'person', label: 'Profile' },
+  ];
+
   return (
     <div className="flex min-h-screen bg-background-light dark:bg-background-dark font-display text-slate-900 dark:text-white">
-      {/* Mobile Header */}
-      <div className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-white dark:bg-[#2d2516] border-b border-[#e6e2db] dark:border-[#3d3322] px-4 py-3 flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="bg-primary size-8 rounded-lg flex items-center justify-center text-white">
-            <span className="material-symbols-outlined">cell_tower</span>
-          </div>
-          <span className="font-bold text-lg">V-Number</span>
-        </div>
-        <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}>
-          <span className="material-symbols-outlined">{isMobileMenuOpen ? 'close' : 'menu'}</span>
-        </button>
-      </div>
 
-      {/* Sidebar - Hidden on mobile unless toggled */}
+      {/* Desktop Sidebar - hidden on mobile */}
       {!isCheckout && (
-        <aside className={`
-            fixed lg:static inset-y-0 left-0 z-30 w-64 bg-white dark:bg-[#2d2516] border-r border-[#e6e2db] dark:border-[#3d3322] flex flex-col transition-transform duration-300 transform lg:transform-none
-            ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}
-        `}>
-          <div className="p-6 hidden lg:block">
+        <aside className="hidden lg:flex fixed lg:static inset-y-0 left-0 z-30 w-64 bg-white dark:bg-[#2d2516] border-r border-[#e6e2db] dark:border-[#3d3322] flex-col">
+          <div className="p-6">
             <div className="flex items-center gap-3">
               <div className="bg-primary size-10 rounded-lg flex items-center justify-center text-white">
                 <span className="material-symbols-outlined">cell_tower</span>
@@ -51,22 +42,11 @@ const AuthenticatedLayout: React.FC = () => {
             </div>
           </div>
 
-          <div className="lg:hidden p-6 mt-12">
-            <div className="flex items-center gap-3 mb-6">
-              <img src={user?.avatar} alt="User" className="size-10 rounded-full" />
-              <div>
-                <p className="font-bold">{user?.name}</p>
-                <p className="text-xs opacity-70">{user?.email}</p>
-              </div>
-            </div>
-          </div>
-
-          <nav className="flex-1 px-4 space-y-1 mt-4 lg:mt-0">
-            {navItems.map((item) => (
+          <nav className="flex-1 px-4 space-y-1">
+            {sidebarNavItems.map((item) => (
               <NavLink
                 key={item.path}
                 to={item.path}
-                onClick={() => setIsMobileMenuOpen(false)}
                 className={({ isActive }) => `
                   flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors
                   ${isActive
@@ -98,18 +78,34 @@ const AuthenticatedLayout: React.FC = () => {
         </aside>
       )}
 
-      {/* Main Content */}
-      <main className={`flex-1 flex flex-col h-screen overflow-hidden pt-14 lg:pt-0 ${isCheckout ? 'w-full' : ''}`}>
+      {/* Main Content — extra bottom padding on mobile for bottom nav */}
+      <main className={`flex-1 flex flex-col h-screen overflow-hidden lg:pt-0 pb-16 lg:pb-0 ${isCheckout ? 'w-full' : ''}`}>
         <Outlet />
       </main>
 
-      {/* Mobile Overlay */}
-      {isMobileMenuOpen && !isCheckout && (
-        <div
-          className="fixed inset-0 bg-black/50 z-20 lg:hidden"
-          onClick={() => setIsMobileMenuOpen(false)}
-        />
-      )}
+      {/* Mobile Bottom Navigation Bar — always visible */}
+      <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-white dark:bg-[#2d2516] border-t border-[#e6e2db] dark:border-[#3d3322] flex items-center justify-around px-1 py-1 safe-area-bottom">
+        {bottomNavItems.map((item) => (
+          <NavLink
+            key={item.path}
+            to={item.path}
+            className={({ isActive }) => `
+                flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg min-w-[56px] transition-colors
+                ${isActive
+                ? 'text-primary'
+                : 'text-slate-400 dark:text-zinc-500'}
+              `}
+          >
+            <span
+              className="material-symbols-outlined text-[22px]"
+              style={item.fill ? { fontVariationSettings: "'FILL' 1" } : {}}
+            >
+              {item.icon}
+            </span>
+            <span className="text-[10px] font-semibold leading-none">{item.label}</span>
+          </NavLink>
+        ))}
+      </nav>
     </div>
   );
 };

@@ -8,57 +8,19 @@
   <meta name="theme-color" content="#eca013" />
   <meta name="theme-color" content="#eca013" />
   <meta name="description" content="Virtual Number Hub" />
-  <meta http-equiv="Content-Security-Policy"
-    content="default-src 'self' https: data: 'unsafe-inline' 'unsafe-eval'; script-src 'self' https: 'unsafe-inline' 'unsafe-eval'; connect-src 'self' https: wss:;">
+
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap"
     rel="stylesheet" />
   <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap"
     rel="stylesheet" />
-  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-  <script>
-    tailwind.config = {
-      darkMode: "class",
-      theme: {
-        extend: {
-          colors: {
-            "primary": "#eca013",
-            "background-light": "#f8f7f6",
-            "background-dark": "#221c10",
-          },
-          fontFamily: {
-            "display": ["Inter", "sans-serif"]
-          },
-        },
-      },
-    }
-  </script>
-  <style>
-    body {
-      font-family: 'Inter', sans-serif;
-    }
-
-    .material-symbols-outlined {
-      font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
-    }
-  </style>
+  <link rel="stylesheet" href="/index.css" />
   <title>V-Number</title>
-  <script type="importmap">
-{
-  "imports": {
-    "react-router-dom": "https://esm.sh/react-router-dom@6.22.3?deps=react@18.2.0,react-dom@18.2.0",
-    "react": "https://esm.sh/react@18.2.0",
-    "react/": "https://esm.sh/react@18.2.0/",
-    "react-dom": "https://esm.sh/react-dom@18.2.0",
-    "react-dom/": "https://esm.sh/react-dom@18.2.0/",
-    "framer-motion": "https://esm.sh/framer-motion@10.18.0?deps=react@18.2.0,react-dom@18.2.0"
-  }
-}
-</script>
+
 </head>
 
 <body class="bg-background-light dark:bg-background-dark text-slate-900 dark:text-white transition-colors duration-200">
   <div id="root"></div>
-  <script src="https://js.paystack.co/v1/inline.js"></script>
+
   <script type="module" src="/index.tsx"></script>
 </body>
 

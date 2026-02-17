@@ -3,105 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { useApp } from '../App';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../src/lib/supabase';
-
-// TypeScript declaration for Paystack
-declare global {
-  interface Window {
-    PaystackPop: any;
-  }
-}
+import PaystackFunding from '../src/components/PaystackFunding';
+import { ServiceLogo } from '../src/utils/serviceIcons';
 
 const Dashboard: React.FC = () => {
-  const { user, balance, totalSpent, activeNumbers, fetchWallet } = useApp();
+  const { user, balance, totalSpent, activeNumbers } = useApp();
   const navigate = useNavigate();
   const [showFundModal, setShowFundModal] = useState(false);
-  const [fundAmount, setFundAmount] = useState('');
-  const [fundingLoading, setFundingLoading] = useState(false);
-  const [verifyingPayment, setVerifyingPayment] = useState(false);
-
-  const handleFundWallet = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const amount = Number(fundAmount);
-    if (!amount || amount < 100) {
-      alert('Minimum funding amount is ₦100');
-      return;
-    }
-
-    setFundingLoading(true);
-    try {
-      const { data, error } = await supabase.functions.invoke('initialize-wallet-funding', {
-        body: { amount }
-      });
-
-      if (error) throw error;
-      if (!data.success) throw new Error(data.message || 'Failed to initialize payment');
-
-      const reference = data.reference;
-      const publicKey = import.meta.env.VITE_PAYSTACK_PUBLIC_KEY;
-
-      if (!publicKey) {
-        throw new Error('Paystack public key not configured');
-      }
-
-      // Open Paystack inline popup
-      const handler = window.PaystackPop.setup({
-        key: publicKey,
-        email: user?.email,
-        amount: amount * 100, // Convert to kobo
-        currency: 'NGN',
-        ref: reference,
-        callback: async function (response: any) {
-          console.log('Payment successful:', response);
-          setFundingLoading(false);
-          setVerifyingPayment(true);
-
-          // Poll for transaction confirmation
-          let attempts = 0;
-          const maxAttempts = 20;
-
-          const checkTransaction = async () => {
-            const { data: txData } = await supabase
-              .from('wallet_transactions')
-              .select('id, amount')
-              .eq('reference', reference)
-              .maybeSingle();
-
-            if (txData) {
-              console.log('Transaction confirmed!', txData);
-              await fetchWallet();
-              setVerifyingPayment(false);
-              setShowFundModal(false);
-              setFundAmount('');
-              alert(`Wallet funded successfully! ₦${amount} added to your balance.`);
-            } else {
-              attempts++;
-              if (attempts < maxAttempts) {
-                setTimeout(checkTransaction, 1500);
-              } else {
-                setVerifyingPayment(false);
-                alert('Payment received but verification is taking longer than usual. Your balance will update shortly.');
-                setShowFundModal(false);
-              }
-            }
-          };
-
-          checkTransaction();
-        },
-        onClose: function () {
-          console.log('Payment popup closed');
-          setFundingLoading(false);
-          setVerifyingPayment(false);
-        }
-      });
-
-      handler.openIframe();
-
-    } catch (err: any) {
-      console.error('Funding Error:', err);
-      alert(err.message || 'Failed to initialize funding. Please try again.');
-      setFundingLoading(false);
-    }
-  };
 
   const container = {
     hidden: { opacity: 0 },
@@ -158,132 +66,105 @@ const Dashboard: React.FC = () => {
         variants={container}
         initial="hidden"
         animate="show"
-        className="p-4 md:p-8 max-w-6xl mx-auto w-full space-y-8"
+        className="p-4 md:p-8 max-w-6xl mx-auto w-full space-y-6"
       >
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
-            <div className="size-12 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
-              <span className="material-symbols-outlined">payments</span>
+        {/* Stats Row — 3 equal columns */}
+        <div className="grid grid-cols-3 gap-2 md:gap-6">
+          <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-3 md:p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex flex-col items-center text-center md:flex-row md:text-left gap-2 md:gap-4 hover:shadow-md transition-shadow">
+            <div className="size-9 md:size-12 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-[18px] md:text-[24px]">payments</span>
             </div>
-            <div>
-              <p className="text-sm text-slate-500 dark:text-zinc-400 font-medium">Total Spent</p>
-              <div className="flex items-baseline gap-2">
-                <h3 className="text-2xl font-bold tracking-tight">₦{totalSpent?.toLocaleString() || '0.00'}</h3>
-              </div>
+            <div className="min-w-0">
+              <p className="text-[10px] md:text-xs text-slate-500 dark:text-zinc-400 font-medium">Total Spent</p>
+              <h3 className="text-sm md:text-2xl font-bold tracking-tight truncate">₦{totalSpent?.toLocaleString() || '0'}</h3>
             </div>
           </motion.div>
-          <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
-            <div className="size-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
-              <span className="material-symbols-outlined">history</span>
+          <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-3 md:p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex flex-col items-center text-center md:flex-row md:text-left gap-2 md:gap-4 hover:shadow-md transition-shadow">
+            <div className="size-9 md:size-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-[18px] md:text-[24px]">history</span>
             </div>
             <div>
-              <p className="text-sm text-slate-500 dark:text-zinc-400 font-medium">History</p>
-              <h3 className="text-2xl font-bold tracking-tight">{activeNumbers.length}</h3>
+              <p className="text-[10px] md:text-xs text-slate-500 dark:text-zinc-400 font-medium">History</p>
+              <h3 className="text-sm md:text-2xl font-bold tracking-tight">{activeNumbers.length}</h3>
             </div>
           </motion.div>
-          <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex items-center gap-4 hover:shadow-md transition-shadow">
-            <div className="size-12 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center">
-              <span className="material-symbols-outlined">forum</span>
+          <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-3 md:p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex flex-col items-center text-center md:flex-row md:text-left gap-2 md:gap-4 hover:shadow-md transition-shadow">
+            <div className="size-9 md:size-12 rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+              <span className="material-symbols-outlined text-[18px] md:text-[24px]">forum</span>
             </div>
-            <div>
-              <p className="text-sm text-slate-500 dark:text-zinc-400 font-medium">SMS Received</p>
-              <h3 className="text-2xl font-bold tracking-tight">
+            <div className="min-w-0">
+              <p className="text-[10px] md:text-xs text-slate-500 dark:text-zinc-400 font-medium">SMS Recv'd</p>
+              <h3 className="text-sm md:text-2xl font-bold tracking-tight">
                 {activeNumbers.reduce((acc, curr) => acc + curr.logs.length, 0)}
               </h3>
             </div>
           </motion.div>
         </div>
 
-        {/* Quick Purchase CTA */}
-        <motion.div variants={item} className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-          <div className="px-6 py-4 border-b border-slate-200 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-800/20">
-            <h2 className="text-lg font-bold">Buy Verification Number</h2>
-          </div>
-          <div className="p-8 flex flex-col items-start gap-4">
-            <p className="text-slate-600 dark:text-zinc-400">Get a temporary number for instant OTP verification from over 100 countries.</p>
-            <motion.button
-              whileHover={{ scale: 1.02 }}
-              whileTap={{ scale: 0.98 }}
-              onClick={() => navigate('/checkout/summary')}
-              className="bg-primary hover:bg-primary/90 text-zinc-900 font-bold h-11 px-8 rounded-lg transition-all shadow-md flex items-center justify-center gap-2"
-            >
-              <span className="material-symbols-outlined text-[20px]">add_shopping_cart</span>
-              Buy Now
-            </motion.button>
-            <p className="text-xs text-slate-500 dark:text-zinc-500">Available for immediate activation. Credits will be deducted from your balance.</p>
-          </div>
-        </motion.div>
+        {/* Buy Verification Number — side-by-side CTA + History */}
+        <motion.div variants={item}>
+          <h2 className="text-lg md:text-xl font-bold mb-3">Buy Verification Number</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Buy Now CTA */}
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm p-6 flex flex-col justify-between">
+              <div className="mb-4">
+                <p className="text-slate-600 dark:text-zinc-400 text-sm mb-1">Get a temporary number for instant OTP verification from 100+ countries.</p>
+                <p className="text-xs text-slate-400 dark:text-zinc-500">Credits deducted from your wallet balance.</p>
+              </div>
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                onClick={() => navigate('/checkout/summary')}
+                className="w-full bg-primary hover:bg-primary/90 text-zinc-900 font-bold h-12 rounded-lg transition-all shadow-md flex items-center justify-center gap-2"
+              >
+                <span className="material-symbols-outlined text-[20px]">add_shopping_cart</span>
+                Buy Now
+              </motion.button>
+            </div>
 
-        {/* History Table */}
-        <motion.div variants={item} className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-[22px] font-bold tracking-tight">History</h2>
-            <button onClick={() => navigate('/numbers')} className="text-sm font-semibold text-primary hover:underline">View all</button>
-          </div>
-          <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead className="bg-slate-50 dark:bg-zinc-800/50">
-                  <tr>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Service</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Number</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Code</th>
-                    <th className="px-6 py-4 text-xs font-bold text-slate-500 dark:text-zinc-400 uppercase tracking-wider text-right">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-zinc-800">
-                  {activeNumbers.slice(0, 5).map((num) => {
-                    // Find the latest code if available
-                    const latestCode = num.logs.find(log => log.code)?.code;
-
-                    return (
-                      <motion.tr
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        key={num.id}
-                        className="hover:bg-slate-50/50 dark:hover:bg-zinc-800/30 transition-colors"
-                      >
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-3">
-                            <div className="size-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
-                              <span className="material-symbols-outlined text-lg">
-                                {num.service === 'WhatsApp' ? 'chat' : num.service === 'Telegram' ? 'send' : 'public'}
-                              </span>
-                            </div>
-                            <span className="text-sm font-semibold">{num.service}</span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4 text-sm font-medium text-slate-600 dark:text-zinc-300">{num.number} ({num.country})</td>
-                        <td className="px-6 py-4">
-                          {latestCode ? (
-                            <span className="inline-block bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 px-2.5 py-1 rounded-md font-mono text-sm font-bold tracking-widest text-primary select-all">
-                              {latestCode}
-                            </span>
-                          ) : (
-                            <span className="text-xs text-slate-400 italic">Waiting for SMS...</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-right">
-                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${num.status === 'Active' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                            num.status === 'Pending' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-400' :
-                              num.status === 'Refunded' ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-400' :
-                                num.status === 'Failed' ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' :
-                                  'bg-slate-100 text-slate-600'
+            {/* Compact History */}
+            <div className="bg-white dark:bg-zinc-900 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm overflow-hidden flex flex-col">
+              <div className="px-4 py-3 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between bg-slate-50/50 dark:bg-zinc-800/20">
+                <h3 className="text-sm font-bold">Recent History</h3>
+                <button onClick={() => navigate('/numbers')} className="text-xs font-semibold text-primary hover:underline">View all</button>
+              </div>
+              <div className="flex-1 divide-y divide-slate-100 dark:divide-zinc-800 overflow-y-auto max-h-[220px]">
+                {activeNumbers.slice(0, 4).map((num) => {
+                  const latestCode = num.logs.find(log => log.code)?.code;
+                  return (
+                    <div key={num.id} className="px-4 py-3 flex items-center justify-between gap-2 hover:bg-slate-50/50 dark:hover:bg-zinc-800/30 transition-colors">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <ServiceLogo serviceName={num.service} size="sm" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold truncate">{num.service}</p>
+                          <p className="text-[10px] text-slate-400 truncate">{num.number}</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {latestCode && latestCode !== 'PENDING' ? (
+                          <span className="bg-slate-100 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 px-2 py-0.5 rounded font-mono text-xs font-bold tracking-wider text-primary">
+                            {latestCode}
+                          </span>
+                        ) : (
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold ${num.status === 'Active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                            num.status === 'Pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                              num.status === 'Refunded' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
+                                'bg-slate-100 text-slate-500'
                             }`}>
                             {num.status}
                           </span>
-                        </td>
-                      </motion.tr>
-                    );
-                  })}
-                  {activeNumbers.length === 0 && (
-                    <tr>
-                      <td colSpan={4} className="px-6 py-10 text-center text-slate-500">No history found.</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {activeNumbers.length === 0 && (
+                  <div className="px-4 py-8 text-center text-slate-400 text-sm">
+                    <span className="material-symbols-outlined text-2xl mb-1 block opacity-40">inbox</span>
+                    No history yet
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </motion.div>
@@ -306,65 +187,14 @@ const Dashboard: React.FC = () => {
               exit={{ opacity: 0, scale: 0.95, y: 20 }}
               className="fixed inset-0 m-auto z-50 w-full max-w-md h-fit p-4"
             >
-              <div className="bg-white dark:bg-zinc-900 rounded-2xl shadow-xl overflow-hidden border border-slate-200 dark:border-zinc-800">
-                <div className="p-6 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between">
-                  <h3 className="text-lg font-bold">Fund Wallet</h3>
-                  <button onClick={() => setShowFundModal(false)} className="size-8 rounded-full hover:bg-slate-100 dark:hover:bg-zinc-800 flex items-center justify-center transition-colors">
-                    <span className="material-symbols-outlined text-xl">close</span>
-                  </button>
-                </div>
-                <div className="p-6">
-                  <form onSubmit={handleFundWallet} className="space-y-6">
-                    <div>
-                      <label className="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-2">Amount (₦)</label>
-                      <div className="relative">
-                        <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold text-slate-400">₦</span>
-                        <input
-                          type="number"
-                          value={fundAmount}
-                          onChange={(e) => setFundAmount(e.target.value)}
-                          placeholder="e.g. 5000"
-                          className="w-full bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl px-4 pl-8 py-3 font-bold focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all"
-                          min="100"
-                          required
-                        />
-                      </div>
-                      <p className="text-xs text-slate-500 mt-2">Minimum funding amount is ₦100.</p>
-                    </div>
-
-                    <div className="bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl flex gap-3">
-                      <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">info</span>
-                      <p className="text-xs text-blue-800 dark:text-blue-300">
-                        {verifyingPayment
-                          ? 'Payment successful! Verifying transaction...'
-                          : 'A secure payment popup will open. Your wallet will be credited automatically upon success.'}
-                      </p>
-                    </div>
-
-                    <button
-                      type="submit"
-                      disabled={fundingLoading || verifyingPayment}
-                      className="w-full bg-primary hover:bg-primary/90 text-zinc-900 font-bold py-4 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 disabled:opacity-70 disabled:cursor-not-allowed"
-                    >
-                      {verifyingPayment ? (
-                        <>
-                          <span className="material-symbols-outlined animate-spin">refresh</span>
-                          Verifying Payment...
-                        </>
-                      ) : fundingLoading ? (
-                        <>
-                          <span className="material-symbols-outlined animate-spin">refresh</span>
-                          Opening Payment...
-                        </>
-                      ) : (
-                        <>
-                          <span className="material-symbols-outlined">account_balance_wallet</span>
-                          Proceed to Payment
-                        </>
-                      )}
-                    </button>
-                  </form>
-                </div>
+              <div className="relative">
+                <button
+                  onClick={() => setShowFundModal(false)}
+                  className="absolute top-4 right-4 z-10 size-8 rounded-full bg-slate-100 dark:bg-zinc-800 hover:bg-slate-200 flex items-center justify-center transition-colors"
+                >
+                  <span className="material-symbols-outlined text-sm">close</span>
+                </button>
+                <PaystackFunding />
               </div>
             </motion.div>
           </>

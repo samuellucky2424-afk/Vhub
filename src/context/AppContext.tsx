@@ -52,6 +52,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
 
     const mapUser = (authUser: any) => {
         setUser({
+            id: authUser.id,
             name: authUser.user_metadata?.full_name || authUser.email?.split('@')[0] || 'User',
             email: authUser.email || '',
             avatar: authUser.user_metadata?.avatar_url || 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?auto=format&fit=crop&q=80&w=200',
@@ -61,21 +62,27 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     };
 
     const fetchWallet = async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (user) {
-            console.log('App: Fetching wallet for user', user.id);
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        if (authUser) {
+            console.log('App: Fetching wallet for user', authUser.id);
             const { data, error } = await supabase
                 .from('wallets')
                 .select('*')
-                .eq('user_id', user.id)
-                .single();
+                .eq('user_id', authUser.id)
+                .maybeSingle();
+
+            if (error) {
+                console.error('App: Wallet fetch error:', error.code, error.message);
+            }
 
             if (data) {
+                console.log('App: Wallet loaded, balance:', data.balance);
                 setWallet(data);
-                setBalance(data.balance);
-            } else if (error && error.code === 'PGRST116') {
-                // Wallet doesn't exist, maybe auto-create or just leave null
-                setWallet({ id: 'temp', user_id: user.id, balance: 0, currency: 'NGN' });
+                setBalance(Number(data.balance));
+            } else {
+                console.log('App: No wallet found, setting default');
+                setWallet({ id: 'temp', user_id: authUser.id, balance: 0, currency: 'NGN' });
+                setBalance(0);
             }
         }
     };
@@ -116,17 +123,34 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
 
             if (data) {
                 const mapped: VirtualNumber[] = data.map(o => {
-                    let status: 'Active' | 'Expired' | 'Completed' | 'Pending' | 'Failed' | 'Refunded' = 'Expired';
+                    let status: 'Active' | 'Expired' | 'Completed' | 'Pending' | 'Failed' | 'Refunded' = 'Pending';
 
+                    // Priority 1: Use SMSPool status if available (source of truth)
                     const poolStatus = o.metadata?.smspool_status;
-                    if (poolStatus === 'refunded' || poolStatus === 2 || poolStatus === 6) {
+                    if (poolStatus !== undefined && poolStatus !== null) {
+                        // SMSPool status codes: 1=pending, 2=expired, 3=completed, 5=cancelled, 6=refunded
+                        if (poolStatus === 3 || poolStatus === 'completed') {
+                            status = 'Completed';
+                        } else if (poolStatus === 2 || poolStatus === 6 || poolStatus === 'refunded') {
+                            status = 'Refunded';
+                        } else if (poolStatus === 5 || poolStatus === 'cancelled') {
+                            status = 'Expired';
+                        } else if (poolStatus === 1 || poolStatus === 'pending' || poolStatus === 'waiting_otp') {
+                            status = 'Active';
+                        }
+                    }
+                    // Priority 2: Fallback to payment_status (before SMSPool responds)
+                    else if (o.payment_status === 'refunded') {
                         status = 'Refunded';
-                    } else if (o.payment_status === 'paid') {
-                        status = o.metadata?.phonenumber ? 'Active' : 'Pending';
-                    } else if (o.payment_status === 'manual_intervention_required' || o.payment_status === 'failed') {
+                    } else if (o.payment_status === 'completed') {
+                        status = 'Completed';
+                    } else if (o.payment_status === 'failed' || o.payment_status === 'manual_intervention_required') {
                         status = 'Failed';
-                    } else if (o.payment_status === 'refunded') {
-                        status = 'Refunded';
+                    } else if (o.payment_status === 'cancelled') {
+                        status = 'Expired';
+                    } else if (o.payment_status === 'paid' || o.payment_status === 'pending') {
+                        // Fresh purchase — number assigned or still processing
+                        status = o.metadata?.phonenumber ? 'Active' : 'Pending';
                     }
 
                     const smsCode = o.sms_code || o.metadata?.sms_code;

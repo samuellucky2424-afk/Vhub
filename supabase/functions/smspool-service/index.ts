@@ -128,15 +128,19 @@ serve(async (req) => {
 
         // --- NEW: Wallet Purchase Action ---
         if (action === 'purchase_wallet') {
-            // 1. Authenticate User
+            // 1. Authenticate User - accept token from body or Authorization header
             const authHeader = req.headers.get('Authorization');
-            if (!authHeader) return new Response("Missing Authorization Header", { status: 401, headers: corsHeaders });
+            const headerToken = authHeader ? authHeader.replace('Bearer ', '') : null;
+            // Prefer user_token from body (when anon key is used for relay auth)
+            const token = payload.user_token || headerToken;
 
-            const token = authHeader.replace('Bearer ', '');
+            if (!token) return new Response(JSON.stringify({ success: false, message: "Missing authentication token" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
             const { data: { user }, error: authError } = await supabase.auth.getUser(token);
 
             if (authError || !user) {
-                return new Response("Invalid User Token", { status: 401, headers: corsHeaders });
+                console.error("Auth Error:", authError);
+                return new Response(JSON.stringify({ success: false, message: "Invalid or expired user token" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
 
             const { service_type, country, service_id, country_id } = payload;
@@ -433,6 +437,16 @@ serve(async (req) => {
                         if (statusVal === 2 || statusVal === 6 || statusVal === 'refunded') {
                             newStatus = 'refunded';
                             updateNeeded = true;
+
+                            // Trigger atomic wallet refund (RPC handles double-refund prevention)
+                            const { data: refundResult, error: refundErr } = await supabase.rpc('process_order_refund', {
+                                p_order_id: localOrder.id
+                            });
+                            if (refundErr) {
+                                log(`Refund RPC error for ${localOrder.id}: ${refundErr.message}`);
+                            } else {
+                                log(`Refund result for ${localOrder.id}: ${JSON.stringify(refundResult)}`);
+                            }
                         } else if (statusVal === 3 || statusVal === 'completed') {
                             if (checkData.sms && checkData.sms !== localOrder.sms_code) {
                                 const code = checkData.sms;
@@ -578,8 +592,15 @@ serve(async (req) => {
             }
 
             if (finalStatus === 'refunded') {
+                // Trigger atomic wallet refund (RPC handles double-refund prevention)
+                const { data: refundResult, error: refundErr } = await supabase.rpc('process_order_refund', {
+                    p_order_id: order_id
+                });
+                log(`Refund result: ${JSON.stringify(refundResult)}, error: ${refundErr?.message || 'none'}`);
+
+                // Update order status (RPC also does this, but ensure it's set)
                 await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', order_id);
-                return new Response(JSON.stringify({ success: false, message: "Order was refunded/expired" }), {
+                return new Response(JSON.stringify({ success: false, message: "Order was refunded/expired", refunded: refundResult?.success }), {
                     headers: { ...corsHeaders, "Content-Type": "application/json" }
                 });
             }
@@ -616,6 +637,12 @@ serve(async (req) => {
             // Map SMSPool status
             if (data.status === 6 || data.status === 2 || data.status === 'refunded') {
                 updates.payment_status = 'refunded';
+
+                // Trigger atomic wallet refund (RPC handles double-refund prevention)
+                const { data: refundResult, error: refundErr } = await supabase.rpc('process_order_refund', {
+                    p_order_id: order_id
+                });
+                console.log(`[check_order] Refund result for ${order_id}:`, refundResult, refundErr?.message || 'ok');
             } else if (data.status === 3 || data.status === 'completed') {
                 if (data.sms && data.sms !== order.metadata?.sms_code) {
                     updates.sms_code = data.sms;

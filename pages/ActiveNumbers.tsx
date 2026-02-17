@@ -3,6 +3,7 @@ import { supabase } from '../src/lib/supabase';
 import { useApp } from '../App';
 import { VirtualNumber } from '../types';
 import { motion, AnimatePresence } from 'framer-motion';
+import { ServiceLogo } from '../src/utils/serviceIcons';
 
 const ActiveNumbers: React.FC = () => {
     const { activeNumbers, refreshNumbers } = useApp();
@@ -156,11 +157,7 @@ const ActiveNumbers: React.FC = () => {
                                     <tr key={num.id} className="group hover:bg-slate-50/50 dark:hover:bg-zinc-800/30 transition-colors">
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-3">
-                                                <div className="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shadow-sm">
-                                                    <span className="material-symbols-outlined">
-                                                        {num.service === 'WhatsApp' ? 'chat' : num.service === 'Telegram' ? 'send' : 'public'}
-                                                    </span>
-                                                </div>
+                                                <ServiceLogo serviceName={num.service} size="md" />
                                                 <div>
                                                     <p className="font-bold text-slate-900 dark:text-white">{num.service}</p>
                                                     <p className="text-xs text-slate-500">{num.country} Region</p>
@@ -258,11 +255,7 @@ const ActiveNumbers: React.FC = () => {
                             {/* Card Header */}
                             <div className="flex justify-between items-start mb-4">
                                 <div className="flex items-center gap-3">
-                                    <div className="size-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center shadow-sm">
-                                        <span className="material-symbols-outlined">
-                                            {num.service === 'WhatsApp' ? 'chat' : num.service === 'Telegram' ? 'send' : 'public'}
-                                        </span>
-                                    </div>
+                                    <ServiceLogo serviceName={num.service} size="md" />
                                     <div>
                                         <h3 className="font-bold text-slate-900 dark:text-white">{num.service}</h3>
                                         <p className="text-xs text-slate-500">{num.country}</p>
@@ -370,11 +363,7 @@ const ActiveNumbers: React.FC = () => {
                         >
                             <div className="p-6 border-b border-slate-100 dark:border-zinc-800 flex items-center justify-between bg-slate-50/50 dark:bg-zinc-800/30">
                                 <div className="flex items-center gap-3">
-                                    <div className="size-10 bg-primary/10 rounded-lg flex items-center justify-center text-primary">
-                                        <span className="material-symbols-outlined">
-                                            {selectedNumber.service === 'WhatsApp' ? 'chat' : selectedNumber.service === 'Telegram' ? 'send' : 'public'}
-                                        </span>
-                                    </div>
+                                    <ServiceLogo serviceName={selectedNumber.service} size="lg" />
                                     <div>
                                         <h3 className="text-lg font-bold text-slate-900 dark:text-white">{selectedNumber.service} History</h3>
                                         <p className="text-xs text-slate-500 font-mono">{selectedNumber.number}</p>
