@@ -66,11 +66,15 @@ serve(async (req) => {
     console.log(`[WALLET FUNDING] Processing ${ref} for user ${userId} +${amountKobo} kobo (₦${amountKobo / 100})`);
 
     // Call credit_wallet RPC — amount must be in kobo (matches balance_kobo column)
-    const { data: creditResult, error: creditError } = await supabase.rpc("credit_wallet", {
-      p_user_id: userId,
-      p_amount: amountKobo,
-      p_reference: ref
-    });
+    const { data: creditResult, error: creditError } = await supabase.rpc(
+  "credit_wallet",
+  {
+    p_user_id: userId,
+    p_amount: amountKobo,
+    p_reference: ref,
+    p_metadata: event.data // or metadata
+  }
+);
 
     if (creditError) {
       if (creditError.message?.includes("Transaction already processed")) {
