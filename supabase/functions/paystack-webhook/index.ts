@@ -47,10 +47,10 @@ serve(async (req) => {
     // Only wallet funding events
     const ref = event.data?.reference;
     const metadata = event.data?.metadata || {};
-    
+
     // Check if it's a wallet funding event either by metadata type or reference prefix
     const isWalletFunding = (metadata.type === "wallet_funding") || (ref && ref.startsWith("fund_"));
-    
+
     if (!isWalletFunding) {
       console.log("[WEBHOOK] Not a wallet funding event, ignoring");
       return new Response("OK", { status: 200 });
@@ -62,13 +62,13 @@ serve(async (req) => {
       return new Response("OK", { status: 200 });
     }
 
-    const amountNGN = (event.data.amount || 0) / 100; // convert kobo to NGN
-    console.log(`[WALLET FUNDING] Processing ${ref} for user ${userId} +₦${amountNGN}`);
+    const amountKobo = event.data.amount || 0;
+    console.log(`[WALLET FUNDING] Processing ${ref} for user ${userId} +${amountKobo} kobo (₦${amountKobo / 100})`);
 
-    // Call credit_wallet RPC
+    // Call credit_wallet RPC — amount must be in kobo (matches balance_kobo column)
     const { data: creditResult, error: creditError } = await supabase.rpc("credit_wallet", {
       p_user_id: userId,
-      p_amount: amountNGN,
+      p_amount: amountKobo,
       p_reference: ref
     });
 

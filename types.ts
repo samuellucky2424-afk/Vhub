@@ -45,11 +45,12 @@ export interface Wallet {
 
 export interface WalletTransaction {
   id: string;
-  wallet_id: string;
-  amount: number;
-  type: 'deposit' | 'purchase' | 'refund' | 'adjustment';
+  user_id: string;
+  amount_kobo: number;
+  type: 'deposit' | 'purchase' | 'refund' | 'adjustment' | 'debit';
   reference?: string;
-  description?: string;
+  status?: string;
+  currency?: string;
   created_at: string;
 }
 

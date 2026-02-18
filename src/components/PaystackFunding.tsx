@@ -49,15 +49,10 @@ const PaystackFunding: React.FC = () => {
                     try {
                         if (!user) throw new Error('User not authenticated');
 
-                        // Call credit_wallet RPC with all 4 required parameters
+                        // Call credit_wallet RPC — amount in kobo, user_id, reference
                         const { data, error } = await supabase.rpc('credit_wallet', {
-                            p_amount: amountNGN,
-                            p_email: userEmail,
-                            p_metadata: {
-                                description: 'Wallet Funding via Paystack',
-                                user_id: user.id,
-                                type: 'wallet_funding'
-                            },
+                            p_user_id: user.id,
+                            p_amount: Math.ceil(amountNGN * 100), // Convert NGN → kobo
                             p_reference: transaction.reference,
                         });
 
