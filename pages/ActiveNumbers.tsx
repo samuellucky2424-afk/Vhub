@@ -22,7 +22,7 @@ const ActiveNumbers: React.FC = () => {
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
                 },
-                body: JSON.stringify({ action: 'check_order', order_id: orderId })
+                body: JSON.stringify({ action: 'sync_order_status', order_id: orderId })
             });
 
             if (!response.ok) {
@@ -49,32 +49,50 @@ const ActiveNumbers: React.FC = () => {
         setTimeout(() => setIsRefreshing(false), 500);
     };
 
-    // Realtime Subscription & Polling Trigger
+    // Auto-sync: periodically pull status from SMSPool for pending orders
     useEffect(() => {
-        // 1. Trigger polling for any pending/active orders that need it
-        const triggerPolling = async () => {
-            const itemsToPoll = activeNumbers.filter(n =>
-                (n.status === 'Active' || n.status === 'Pending') &&
-                (!n.logs || n.logs.length === 0 || !n.logs.some(l => l.code))
+        // Sync all pending orders by calling sync_order_status for each
+        const syncPendingOrders = async () => {
+            const pendingOrders = activeNumbers.filter(n =>
+                (n.status === 'Pending' || n.status === 'Active') &&
+                // Skip stale orders without an SMSPool request_id — they can't be synced
+                n.number !== 'Processing...'
             );
 
-            for (const item of itemsToPoll) {
-                // Fire and forget - don't await the result as it might take 100s
-                console.log(`Triggering background polling for ${item.id}...`);
-                fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/smspool-service`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-                    },
-                    body: JSON.stringify({ action: 'poll_sms', order_id: item.id })
-                }).catch(err => console.error("Polling trigger error:", err));
+            if (pendingOrders.length === 0) return;
+
+            console.log(`[AutoSync] Syncing ${pendingOrders.length} pending orders...`);
+
+            for (const item of pendingOrders) {
+                try {
+                    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/smspool-service`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                        },
+                        body: JSON.stringify({ action: 'sync_order_status', order_id: item.id })
+                    });
+                    const result = await response.json();
+                    console.log(`[AutoSync] Order ${item.id}:`, result);
+
+                    // If status changed, refresh immediately
+                    if (result.status_changed) {
+                        await refreshNumbers();
+                    }
+                } catch (err) {
+                    console.error(`[AutoSync] Error syncing ${item.id}:`, err);
+                }
             }
         };
 
-        triggerPolling();
+        // Run immediately on mount
+        syncPendingOrders();
 
-        // 2. Setup Realtime Subscription
+        // Then run every 15 seconds
+        const interval = setInterval(syncPendingOrders, 15000);
+
+        // Realtime subscription for instant UI updates when DB changes
         const channel = supabase
             .channel('verifications-channel')
             .on(
@@ -86,16 +104,28 @@ const ActiveNumbers: React.FC = () => {
                 },
                 (payload) => {
                     console.log("Realtime: New verification received!", payload);
-                    // Refresh data to show the new code
+                    refreshNumbers();
+                }
+            )
+            .on(
+                'postgres_changes',
+                {
+                    event: 'UPDATE',
+                    schema: 'public',
+                    table: 'orders',
+                },
+                (payload) => {
+                    console.log("Realtime: Order updated!", payload);
                     refreshNumbers();
                 }
             )
             .subscribe();
 
         return () => {
+            clearInterval(interval);
             supabase.removeChannel(channel);
         };
-    }, [activeNumbers.length]); // Re-run if number count changes (e.g. new purchase), but not on every refresh to avoid spamming
+    }, [activeNumbers.length]); // Re-run if number count changes (e.g. new purchase)
 
 
     // Helper to get latest log info

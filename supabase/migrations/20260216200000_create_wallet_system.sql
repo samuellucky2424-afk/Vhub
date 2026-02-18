@@ -54,21 +54,20 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_wallet_id uuid;
   v_current_balance numeric;
   v_order_id uuid;
   v_new_balance numeric;
 BEGIN
-  -- 1. Lock Wallet Row for Update
-  SELECT id, balance INTO v_wallet_id, v_current_balance
+  -- 1. Lock Wallet Row for Update (using user_id)
+  SELECT balance INTO v_current_balance
   FROM public.wallets
   WHERE user_id = p_user_id
   FOR UPDATE;
 
-  IF v_wallet_id IS NULL THEN
+  IF v_current_balance IS NULL THEN
     -- Auto-create wallet if not exists
     INSERT INTO public.wallets (user_id, balance) VALUES (p_user_id, 0)
-    RETURNING id, balance INTO v_wallet_id, v_current_balance;
+    RETURNING balance INTO v_current_balance;
   END IF;
 
   -- 2. Check Sufficient Funds
@@ -80,7 +79,7 @@ BEGIN
   v_new_balance := v_current_balance - p_price_ngn;
   UPDATE public.wallets
   SET balance = v_new_balance, updated_at = now()
-  WHERE id = v_wallet_id;
+  WHERE user_id = p_user_id;
 
   -- 4. Create Order
   INSERT INTO public.orders (
@@ -102,17 +101,15 @@ BEGIN
 
   -- 5. Log Transaction
   INSERT INTO public.wallet_transactions (
-    wallet_id,
+    user_id,
     amount,
     type,
-    reference,
-    description
+    reference
   ) VALUES (
-    v_wallet_id,
+    p_user_id,
     -p_price_ngn,
     'purchase',
-    v_order_id::text,
-    'Purchase of ' || p_service_type || ' (' || p_country || ')'
+    v_order_id::text
   );
 
   RETURN jsonb_build_object('success', true, 'order_id', v_order_id, 'new_balance', v_new_balance);
@@ -131,23 +128,28 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_order RECORD;
-  v_wallet_id uuid;
+  v_user_id uuid;
+  v_payment_status text;
+  v_price_usd numeric;
+  v_wallet_deduction numeric;
   v_refund_amount numeric;
+  v_current_balance numeric;
 BEGIN
-  -- 1. Lock Order Row
-  SELECT * INTO v_order
+  -- 1. Lock and get order details
+  SELECT user_id, payment_status, price_usd, 
+         (metadata->>'wallet_deduction')::numeric
+  INTO v_user_id, v_payment_status, v_price_usd, v_wallet_deduction
   FROM public.orders
-  WHERE id = p_order_id
+  WHERE orders.id = p_order_id
   FOR UPDATE;
 
-  IF v_order IS NULL THEN
+  IF v_user_id IS NULL THEN
     RETURN jsonb_build_object('success', false, 'message', 'Order not found');
   END IF;
 
   -- 2. Validate Refund Eligibility (accept pending or paid)
-  IF v_order.payment_status NOT IN ('pending', 'paid') THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Order not eligible for refund (status: ' || v_order.payment_status || ')');
+  IF v_payment_status NOT IN ('pending', 'paid') THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Order not eligible for refund (status: ' || v_payment_status || ')');
   END IF;
 
   -- 3. Double-refund guard: check if a refund transaction already exists
@@ -164,48 +166,46 @@ BEGIN
   END IF;
 
   -- 4. Get Refund Amount from Metadata
-  v_refund_amount := (v_order.metadata->>'wallet_deduction')::numeric;
+  v_refund_amount := v_wallet_deduction;
+  IF v_refund_amount IS NULL OR v_refund_amount <= 0 THEN
+      v_refund_amount := v_price_usd;
+  END IF;
   
   IF v_refund_amount IS NULL OR v_refund_amount <= 0 THEN
      RETURN jsonb_build_object('success', false, 'message', 'No valid refund amount found in metadata');
   END IF;
 
-  -- 5. Get Wallet (with lock)
-  SELECT id INTO v_wallet_id
-  FROM public.wallets
-  WHERE user_id = v_order.user_id
-  FOR UPDATE;
+  -- 5. Refund Wallet (using user_id, no wallets.id column)
+  UPDATE public.wallets
+  SET balance = balance + v_refund_amount, updated_at = now()
+  WHERE user_id = v_user_id;
 
-  IF v_wallet_id IS NULL THEN
+  IF NOT FOUND THEN
      RETURN jsonb_build_object('success', false, 'message', 'User wallet not found');
   END IF;
 
-  -- 6. Refund Wallet
-  UPDATE public.wallets
-  SET balance = balance + v_refund_amount, updated_at = now()
-  WHERE id = v_wallet_id;
+  SELECT balance INTO v_current_balance
+  FROM public.wallets WHERE public.wallets.user_id = v_user_id;
 
-  -- 7. Update Order Status
+  -- 6. Update Order Status
   UPDATE public.orders
   SET payment_status = 'refunded', updated_at = now()
   WHERE id = p_order_id;
 
-  -- 8. Log Transaction
+  -- 7. Log Transaction
   INSERT INTO public.wallet_transactions (
-    wallet_id,
+    user_id,
     amount,
     type,
-    reference,
-    description
+    reference
   ) VALUES (
-    v_wallet_id,
+    v_user_id,
     v_refund_amount,
     'refund',
-    p_order_id::text,
-    'Refund for expired/failed order ' || p_order_id
+    p_order_id::text
   );
 
-  RETURN jsonb_build_object('success', true, 'message', 'Refund processed', 'amount', v_refund_amount);
+  RETURN jsonb_build_object('success', true, 'message', 'Refund processed', 'amount', v_refund_amount, 'new_balance', v_current_balance);
 
 EXCEPTION WHEN OTHERS THEN
   RETURN jsonb_build_object('success', false, 'message', SQLERRM);

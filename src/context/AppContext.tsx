@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { AppContextType, VirtualNumber, User, Wallet } from '../../types';
 import { supabase } from '../lib/supabase';
+import { formatNaira, koboToNaira } from '../utils/formatCurrency';
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
@@ -19,7 +20,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     const [activeNumbers, setActiveNumbers] = useState<VirtualNumber[]>([]);
     const [balance, setBalance] = useState(0.00);
     const [wallet, setWallet] = useState<Wallet | null>(null);
-    const [totalSpent, setTotalSpent] = useState(0.00);
+
     const [loading, setLoading] = useState(true);
 
     // Auth & Data Fetching Effect
@@ -76,12 +77,13 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
             }
 
             if (data) {
-                console.log('App: Wallet loaded, balance:', data.balance);
+                console.log('Wallet raw kobo:', data.balance_kobo);
+                console.log('Wallet formatted:', formatNaira(data.balance_kobo ?? 0));
                 setWallet(data);
-                setBalance(Number(data.balance));
+                setBalance(koboToNaira(Number(data.balance_kobo ?? 0)));
             } else {
                 console.log('App: No wallet found, setting default');
-                setWallet({ id: 'temp', user_id: authUser.id, balance: 0, currency: 'NGN' });
+                setWallet({ id: 'temp', user_id: authUser.id, balance_kobo: 0, locked_balance: 0, currency: 'NGN' });
                 setBalance(0);
             }
         }
@@ -99,8 +101,11 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
                     (payload) => {
                         console.log('App: Wallet update received', payload);
                         if (payload.new) {
-                            setWallet(payload.new as Wallet);
-                            setBalance((payload.new as Wallet).balance);
+                            const updated = payload.new as Wallet;
+                            setWallet(updated);
+                            setBalance(koboToNaira(Number(updated.balance_kobo ?? 0)));
+                            console.log('Wallet raw kobo:', updated.balance_kobo);
+                            console.log('Wallet formatted:', formatNaira(updated.balance_kobo ?? 0));
                         }
                     }
                 )
@@ -125,32 +130,20 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
                 const mapped: VirtualNumber[] = data.map(o => {
                     let status: 'Active' | 'Expired' | 'Completed' | 'Pending' | 'Failed' | 'Refunded' = 'Pending';
 
-                    // Priority 1: Use SMSPool status if available (source of truth)
-                    const poolStatus = o.metadata?.smspool_status;
-                    if (poolStatus !== undefined && poolStatus !== null) {
-                        // SMSPool status codes: 1=pending, 2=expired, 3=completed, 5=cancelled, 6=refunded
-                        if (poolStatus === 3 || poolStatus === 'completed') {
-                            status = 'Completed';
-                        } else if (poolStatus === 2 || poolStatus === 6 || poolStatus === 'refunded') {
-                            status = 'Refunded';
-                        } else if (poolStatus === 5 || poolStatus === 'cancelled') {
-                            status = 'Expired';
-                        } else if (poolStatus === 1 || poolStatus === 'pending' || poolStatus === 'waiting_otp') {
-                            status = 'Active';
-                        }
-                    }
-                    // Priority 2: Fallback to payment_status (before SMSPool responds)
-                    else if (o.payment_status === 'refunded') {
-                        status = 'Refunded';
-                    } else if (o.payment_status === 'completed') {
+                    // Status derived from payment_status column (synced from SMSPool server-side)
+                    // SMSPool has 3 statuses: pending, completed, refunded
+                    const ps = o.payment_status;
+                    if (ps === 'completed') {
                         status = 'Completed';
-                    } else if (o.payment_status === 'failed' || o.payment_status === 'manual_intervention_required') {
+                    } else if (ps === 'refunded') {
+                        status = 'Refunded';
+                    } else if (ps === 'failed' || ps === 'manual_intervention_required') {
                         status = 'Failed';
-                    } else if (o.payment_status === 'cancelled') {
+                    } else if (ps === 'cancelled') {
                         status = 'Expired';
-                    } else if (o.payment_status === 'paid' || o.payment_status === 'pending') {
-                        // Fresh purchase — number assigned or still processing
-                        status = o.metadata?.phonenumber ? 'Active' : 'Pending';
+                    } else {
+                        // 'pending', 'paid', or any other status = still waiting
+                        status = 'Pending';
                     }
 
                     const smsCode = o.sms_code || o.metadata?.sms_code;
@@ -174,10 +167,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
                 });
                 setActiveNumbers(mapped);
 
-                const spent = data
-                    .filter(o => o.payment_status === 'paid')
-                    .reduce((sum, order) => sum + (Number(order.price_usd) || 0), 0);
-                setTotalSpent(spent);
+
             }
         } catch (err) {
             console.error('Error fetching orders:', err);
@@ -215,7 +205,7 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         <AppContext.Provider value={{
             user,
             balance,
-            totalSpent,
+
             activeNumbers,
             transactions: [],
             isAuthenticated,

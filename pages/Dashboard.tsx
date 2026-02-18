@@ -5,9 +5,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../src/lib/supabase';
 import PaystackFunding from '../src/components/PaystackFunding';
 import { ServiceLogo } from '../src/utils/serviceIcons';
+import { formatNaira } from '../src/utils/formatCurrency';
 
 const Dashboard: React.FC = () => {
-  const { user, balance, totalSpent, activeNumbers } = useApp();
+  const { user, balance, activeNumbers, wallet } = useApp();
   const navigate = useNavigate();
   const [showFundModal, setShowFundModal] = useState(false);
 
@@ -47,7 +48,7 @@ const Dashboard: React.FC = () => {
             className="bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 rounded-full px-4 py-1.5 flex items-center gap-2 hover:border-primary transition-colors cursor-pointer"
           >
             <span className="text-xs font-semibold text-slate-500 dark:text-zinc-400 uppercase tracking-wider">Balance</span>
-            <span className="text-sm font-bold text-primary">₦{balance?.toLocaleString() || '0.00'}</span>
+            <span className="text-sm font-bold text-primary">{formatNaira(wallet?.balance_kobo ?? 0)}</span>
             <span className="material-symbols-outlined text-primary text-sm bg-primary/10 rounded-full p-0.5">add</span>
           </motion.button>
           <div className="hidden md:flex items-center gap-3">
@@ -69,16 +70,8 @@ const Dashboard: React.FC = () => {
         className="p-4 md:p-8 max-w-6xl mx-auto w-full space-y-6"
       >
         {/* Stats Row — 3 equal columns */}
-        <div className="grid grid-cols-3 gap-2 md:gap-6">
-          <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-3 md:p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex flex-col items-center text-center md:flex-row md:text-left gap-2 md:gap-4 hover:shadow-md transition-shadow">
-            <div className="size-9 md:size-12 rounded-lg bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 dark:text-emerald-400 flex items-center justify-center shrink-0">
-              <span className="material-symbols-outlined text-[18px] md:text-[24px]">payments</span>
-            </div>
-            <div className="min-w-0">
-              <p className="text-[10px] md:text-xs text-slate-500 dark:text-zinc-400 font-medium">Total Spent</p>
-              <h3 className="text-sm md:text-2xl font-bold tracking-tight truncate">₦{totalSpent?.toLocaleString() || '0'}</h3>
-            </div>
-          </motion.div>
+        <div className="grid grid-cols-2 gap-2 md:gap-6">
+
           <motion.div variants={item} className="bg-white dark:bg-zinc-900 p-3 md:p-6 rounded-xl border border-slate-200 dark:border-zinc-800 shadow-sm flex flex-col items-center text-center md:flex-row md:text-left gap-2 md:gap-4 hover:shadow-md transition-shadow">
             <div className="size-9 md:size-12 rounded-lg bg-primary/10 text-primary flex items-center justify-center shrink-0">
               <span className="material-symbols-outlined text-[18px] md:text-[24px]">history</span>

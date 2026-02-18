@@ -3,6 +3,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useApp } from '../../App';
 import { supabase } from '../../src/lib/supabase';
 import { ServiceLogo } from '../../src/utils/serviceIcons';
+import { formatNaira, nairaToKobo, koboToNaira } from '../../src/utils/formatCurrency';
 
 
 const CheckoutPayment: React.FC = () => {
@@ -41,7 +42,8 @@ const CheckoutPayment: React.FC = () => {
     const safeAmountNGN = Number(amountNGN) || 0;
     const finalAmountNGN = safeAmountNGN > 0 ? safeAmountNGN : 0;
 
-    const hasSufficientFunds = wallet && wallet.balance >= finalAmountNGN;
+    // Compare in kobo: convert finalAmountNGN (naira) to kobo for comparison
+    const hasSufficientFunds = wallet && (wallet.balance_kobo ?? 0) >= nairaToKobo(finalAmountNGN);
 
     const handleWalletPayment = async () => {
         if (!user || !wallet) return;
@@ -82,6 +84,7 @@ const CheckoutPayment: React.FC = () => {
             const data = await response.json();
 
             if (!response.ok) {
+                console.error('[CheckoutPayment] Server error response:', JSON.stringify(data));
                 throw new Error(data.message || data.error || `Server error: ${response.status}`);
             }
 
@@ -183,7 +186,7 @@ const CheckoutPayment: React.FC = () => {
                                     <div>
                                         <p className="text-sm font-bold text-slate-900 dark:text-white">Wallet Balance</p>
                                         <p className={`text-xs font-medium ${hasSufficientFunds ? 'text-emerald-600' : 'text-red-600'}`}>
-                                            Available: ₦{wallet?.balance?.toLocaleString() || '0.00'}
+                                            Available: {formatNaira(wallet?.balance_kobo ?? 0)}
                                         </p>
                                     </div>
                                 </div>

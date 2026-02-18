@@ -153,34 +153,36 @@ serve(async (req) => {
             if (!priceData.price) return new Response(JSON.stringify({ success: false, message: "Service unavailable or no price" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
             // Ensure getExchangeRate is defined in scope or call checking logic
-            // Note: In previous file content, getExchangeRate was defined inside serve.
             const USD_TO_NGN_RATE = await getExchangeRate();
             const rawUSD = parseFloat(priceData.price);
             const markup = 1.45;
             const price_usd = rawUSD * markup;
             const price_ngn = Math.round(price_usd * USD_TO_NGN_RATE);
+            const price_kobo = price_ngn * 100; // Convert NGN to kobo for DB
 
-            console.log(`[Wallet] Purchasing ${service_type} for User ${user.id}. Cost: ₦${price_ngn}`);
+            console.log(`[Wallet] Purchasing ${service_type} for User ${user.id}. Cost: ₦${price_ngn} (${price_kobo} kobo)`);
 
             // 3. Call process_purchase RPC (Atomic Deduction + Order)
             const { data: purchaseResult, error: rpcError } = await supabase.rpc('process_purchase', {
                 p_user_id: user.id,
                 p_service_type: service_type,
                 p_country: country,
-                p_price_ngn: price_ngn,
-                p_price_usd: price_usd,
+                p_price_kobo: price_kobo,
+                p_exchange_rate: USD_TO_NGN_RATE,
                 p_metadata: {
                     countryId: country_id,
                     serviceId: service_id,
                     source: 'wallet',
                     raw_usd: rawUSD,
+                    markup_usd: price_usd,
+                    price_ngn: price_ngn,
                     rate: USD_TO_NGN_RATE
                 }
             });
 
             if (rpcError) {
-                console.error("RPC Error:", rpcError);
-                return new Response(JSON.stringify({ success: false, message: "Transaction failed", error: rpcError.message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                console.error("RPC Error:", JSON.stringify(rpcError));
+                return new Response(JSON.stringify({ success: false, message: rpcError.message || "Transaction failed", error: rpcError.message, details: rpcError.details, hint: rpcError.hint, code: rpcError.code }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
 
             if (!purchaseResult.success) {
@@ -430,24 +432,18 @@ serve(async (req) => {
 
                         const statusVal = checkData.status;
 
-                        let newStatus = localOrder.payment_status;
+                        let newSmsStatus = localOrder.status || localOrder.payment_status;
                         let newMetadata = { ...localOrder.metadata, smspool_status: statusVal, status_checked_at: new Date().toISOString() };
                         let updateNeeded = false;
 
                         if (statusVal === 2 || statusVal === 6 || statusVal === 'refunded') {
-                            newStatus = 'refunded';
+                            newSmsStatus = 'refunded';
                             updateNeeded = true;
-
-                            // Trigger atomic wallet refund (RPC handles double-refund prevention)
-                            const { data: refundResult, error: refundErr } = await supabase.rpc('process_order_refund', {
-                                p_order_id: localOrder.id
-                            });
-                            if (refundErr) {
-                                log(`Refund RPC error for ${localOrder.id}: ${refundErr.message}`);
-                            } else {
-                                log(`Refund result for ${localOrder.id}: ${JSON.stringify(refundResult)}`);
-                            }
+                            // DB trigger (trg_auto_refund) will auto-credit wallet when status='refunded'
+                            log(`[check_sms] Setting status=refunded for ${localOrder.id} — trigger will handle wallet credit`);
                         } else if (statusVal === 3 || statusVal === 'completed') {
+                            newSmsStatus = 'completed';
+                            updateNeeded = true;
                             if (checkData.sms && checkData.sms !== localOrder.sms_code) {
                                 const code = checkData.sms;
                                 const newLog = {
@@ -458,20 +454,20 @@ serve(async (req) => {
                                     receivedAt: new Date().toISOString()
                                 };
                                 newMetadata.logs = [newLog, ...(newMetadata.logs || [])];
-                                newMetadata.sms_code = code; // Update field in metadata for consistency
-                                updateNeeded = true;
+                                newMetadata.sms_code = code;
                             }
+                        } else if (statusVal === 1 || statusVal === 'pending') {
+                            // SMSPool status 1 = pending (waiting for SMS code)
+                            log(`Order ${localOrder.id} is pending on SMSPool (waiting for code)`);
                         }
 
                         if (updateNeeded) {
-                            const updatePayload: any = { metadata: newMetadata };
-                            if (newStatus !== localOrder.payment_status && newStatus !== 'refunded') {
-                                updatePayload.payment_status = newStatus;
+                            const updatePayload: any = { metadata: newMetadata, status: newSmsStatus };
+                            // For completed orders, also update payment_status
+                            if (newSmsStatus === 'completed') {
+                                updatePayload.payment_status = 'completed';
                             }
-                            // Remove invalid column update
-                            // if (newMetadata.sms_code && newMetadata.sms_code !== localOrder.sms_code) {
-                            //     updatePayload.sms_code = newMetadata.sms_code;
-                            // }
+                            // NOTE: for refunded, do NOT set payment_status here — the DB trigger does it
 
                             const { error: updateError } = await supabase.from('orders').update(updatePayload).eq('id', localOrder.id);
 
@@ -490,8 +486,8 @@ serve(async (req) => {
                                         .eq('order_id', localOrder.id);
                                 }
 
-                                updates.push({ order_id: localOrder.id, status: newStatus });
-                                log(`Updated order ${localOrder.id} to ${newStatus}`);
+                                updates.push({ order_id: localOrder.id, status: newSmsStatus });
+                                log(`Updated order ${localOrder.id} to status=${newSmsStatus}`);
                             }
                         } else {
                             log(`No update needed for ${localOrder.id}. StatusVal: ${statusVal}`);
@@ -592,15 +588,15 @@ serve(async (req) => {
             }
 
             if (finalStatus === 'refunded') {
-                // Trigger atomic wallet refund (RPC handles double-refund prevention)
-                const { data: refundResult, error: refundErr } = await supabase.rpc('process_order_refund', {
-                    p_order_id: order_id
-                });
-                log(`Refund result: ${JSON.stringify(refundResult)}, error: ${refundErr?.message || 'none'}`);
-
-                // Update order status (RPC also does this, but ensure it's set)
-                await supabase.from('orders').update({ payment_status: 'refunded' }).eq('id', order_id);
-                return new Response(JSON.stringify({ success: false, message: "Order was refunded/expired", refunded: refundResult?.success }), {
+                // Set orders.status = 'refunded' (SMS lifecycle)
+                // DB trigger (trg_auto_refund) will auto-credit wallet
+                const { error: updateErr } = await supabase.from('orders').update({ status: 'refunded' }).eq('id', order_id);
+                if (updateErr) {
+                    log(`[poll_sms] Failed to set status=refunded for ${order_id}: ${updateErr.message}`);
+                } else {
+                    log(`[poll_sms] Set status=refunded for ${order_id} — trigger will handle wallet credit`);
+                }
+                return new Response(JSON.stringify({ success: false, message: "Order was refunded/expired", refunded: true }), {
                     headers: { ...corsHeaders, "Content-Type": "application/json" }
                 });
             }
@@ -608,6 +604,127 @@ serve(async (req) => {
             return new Response(JSON.stringify({ success: false, message: "Polling timed out, no SMS received yet." }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
             });
+        }
+
+        // ─── NEW: sync_order_status ─── Server-side per-order sync ───
+        if (action === 'sync_order_status') {
+            const { order_id } = payload;
+            if (!order_id) return new Response(JSON.stringify({ success: false, message: 'Missing order_id' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+
+            const log = (msg: string) => console.log(`[sync_order_status] ${msg}`);
+            log(`Syncing order ${order_id}...`);
+
+            // 1. Fetch order from Supabase
+            const { data: order, error: orderErr } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('id', order_id)
+                .single();
+
+            if (orderErr || !order) {
+                log(`Order not found: ${orderErr?.message}`);
+                return new Response(JSON.stringify({ success: false, message: 'Order not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            // 2. Read request_id (SMSPool order ID)
+            const requestId = order.request_id;
+            if (!requestId) {
+                log(`Order ${order_id} has no request_id — cannot check SMSPool`);
+                return new Response(JSON.stringify({ success: false, message: 'No SMSPool request_id on this order' }), { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            }
+
+            // 3. Call SMSPool API to check status
+            const checkUrl = `https://api.smspool.net/sms/check?key=${SMSPOOL_API_KEY}&orderid=${requestId}`;
+            log(`Calling SMSPool: ${checkUrl}`);
+            const checkResp = await fetch(checkUrl);
+            const checkData = await checkResp.json();
+            log(`SMSPool response: status=${checkData.status}, sms=${checkData.sms || 'none'}`);
+
+            const statusVal = checkData.status;
+
+            // 4. Map SMSPool statuses
+            let newSmsStatus = order.status || order.payment_status;
+            let newMetadata = { ...order.metadata, smspool_status: statusVal, status_checked_at: new Date().toISOString() };
+            let statusChanged = false;
+            let refundTriggered = false;
+
+            if (statusVal === 1 || statusVal === 'pending') {
+                // SMSPool status 1 = pending (code hasn't arrived yet)
+                log(`Status: pending (waiting for code)`);
+            } else if (statusVal === 3 || statusVal === 'completed') {
+                // SMSPool status 3 = completed (code arrived)
+                newSmsStatus = 'completed';
+                statusChanged = true;
+                log(`Status mapped: 3 → completed`);
+
+                // Store SMS code if available
+                if (checkData.sms) {
+                    const code = checkData.sms;
+                    newMetadata.sms_code = code;
+                    const existingLogs = newMetadata.logs || [];
+                    const alreadyLogged = existingLogs.some((l: any) => l.code === code);
+                    if (!alreadyLogged) {
+                        newMetadata.logs = [{
+                            id: Date.now().toString(),
+                            sender: 'Service',
+                            message: `Your code is ${code}`,
+                            code,
+                            receivedAt: new Date().toISOString()
+                        }, ...existingLogs];
+                    }
+
+                    // Update verifications table
+                    await supabase
+                        .from('verifications')
+                        .update({
+                            otp_code: code,
+                            full_sms: checkData.full_sms || code,
+                            received_at: new Date().toISOString()
+                        })
+                        .eq('order_id', order_id);
+                }
+            } else if (statusVal === 6 || statusVal === 2 || statusVal === 'refunded') {
+                // SMSPool status 6 → refunded (SMS lifecycle)
+                newSmsStatus = 'refunded';
+                statusChanged = true;
+                refundTriggered = true;
+                log(`Status mapped: ${statusVal} → refunded (trigger will handle wallet credit)`);
+                // DB trigger (trg_auto_refund) will auto-credit wallet when status='refunded'
+            }
+
+            // 5. Update Supabase orders table
+            if (statusChanged) {
+                const updatePayload: any = { status: newSmsStatus, metadata: newMetadata };
+                if (newMetadata.sms_code) {
+                    updatePayload.sms_code = newMetadata.sms_code;
+                }
+                // For completed, also set payment_status
+                if (newSmsStatus === 'completed') {
+                    updatePayload.payment_status = 'completed';
+                }
+                // NOTE: for refunded, do NOT set payment_status — the DB trigger does it
+                const { error: updateErr } = await supabase.from('orders').update(updatePayload).eq('id', order_id);
+                if (updateErr) {
+                    log(`DB update error: ${updateErr.message}`);
+                    return new Response(JSON.stringify({ success: false, message: 'Failed to update order', error: updateErr.message }), { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+                }
+                log(`Order ${order_id} updated: status=${newSmsStatus}`);
+            } else {
+                // Still update metadata with latest check timestamp
+                await supabase.from('orders').update({ metadata: newMetadata }).eq('id', order_id);
+                log(`No status change for order ${order_id}. Current: ${order.status || order.payment_status}`);
+            }
+
+            return new Response(JSON.stringify({
+                success: true,
+                order_id,
+                previous_status: order.payment_status,
+                new_status: newSmsStatus,
+                smspool_status: statusVal,
+                sms: checkData.sms || null,
+                refund_triggered: refundTriggered,
+                status_changed: statusChanged
+            }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
         }
 
         if (action === 'check_order') {
@@ -636,14 +753,12 @@ serve(async (req) => {
 
             // Map SMSPool status
             if (data.status === 6 || data.status === 2 || data.status === 'refunded') {
-                updates.payment_status = 'refunded';
-
-                // Trigger atomic wallet refund (RPC handles double-refund prevention)
-                const { data: refundResult, error: refundErr } = await supabase.rpc('process_order_refund', {
-                    p_order_id: order_id
-                });
-                console.log(`[check_order] Refund result for ${order_id}:`, refundResult, refundErr?.message || 'ok');
+                // Set SMS lifecycle status — DB trigger handles wallet credit
+                updates.status = 'refunded';
+                console.log(`[check_order] Setting status=refunded for ${order_id} — trigger will handle wallet credit`);
             } else if (data.status === 3 || data.status === 'completed') {
+                updates.status = 'completed';
+                updates.payment_status = 'completed';
                 if (data.sms && data.sms !== order.metadata?.sms_code) {
                     updates.sms_code = data.sms;
                     const newLog = {
@@ -665,6 +780,9 @@ serve(async (req) => {
                         })
                         .eq('order_id', order_id);
                 }
+            } else if (data.status === 1 || data.status === 'pending') {
+                // SMSPool status 1 = pending (code hasn't arrived yet) — no change needed
+                console.log(`[check_order] Order ${order_id} is pending on SMSPool (waiting for code)`);
             }
 
             const { error } = await supabase.from('orders').update(updates).eq('id', order_id);

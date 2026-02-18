@@ -1,4 +1,5 @@
 -- Function to Process Purchase (Atomic Deduction + Order Creation)
+-- Uses wallet_id for wallet_transactions (matches deployed schema)
 CREATE OR REPLACE FUNCTION process_purchase(
   p_user_id uuid,
   p_service_type text,
@@ -12,75 +13,53 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_wallet_id uuid;
   v_current_balance numeric;
+  v_wallet_id uuid;
   v_order_id uuid;
   v_new_balance numeric;
 BEGIN
-  -- 1. Lock Wallet Row for Update
-  SELECT id, balance INTO v_wallet_id, v_current_balance
-  FROM public.wallets
-  WHERE user_id = p_user_id
+  SELECT w.id, w.balance INTO v_wallet_id, v_current_balance
+  FROM public.wallets w
+  WHERE w.user_id = p_user_id
   FOR UPDATE;
 
   IF v_wallet_id IS NULL THEN
-    -- Auto-create wallet if not exists (Optional, but good for UX)
     INSERT INTO public.wallets (user_id, balance) VALUES (p_user_id, 0)
     RETURNING id, balance INTO v_wallet_id, v_current_balance;
   END IF;
 
-  -- 2. Check Sufficient Funds
   IF v_current_balance < p_price_ngn THEN
     RETURN jsonb_build_object('success', false, 'message', 'Insufficient funds');
   END IF;
 
-  -- 3. Deduct Balance
   v_new_balance := v_current_balance - p_price_ngn;
   UPDATE public.wallets
   SET balance = v_new_balance, updated_at = now()
-  WHERE id = v_wallet_id;
+  WHERE wallets.id = v_wallet_id;
 
-  -- 4. Create Order
   INSERT INTO public.orders (
-    user_id,
-    service_type,
-    price_usd, -- storing USD price for reference
-    payment_status, -- 'pending' as per requirement (waiting for SMS)
-    payment_reference, -- Internal Wallet Ref
-    metadata
+    user_id, service_type, price_usd, payment_status, status,
+    payment_reference, metadata
   ) VALUES (
-    p_user_id,
-    p_service_type,
-    p_price_usd,
-    'pending',
-    'WAL-' || gen_random_uuid(), -- Unique internal ref
+    p_user_id, p_service_type, p_price_usd, 'pending', 'pending',
+    'WAL-' || gen_random_uuid(),
     p_metadata || jsonb_build_object('wallet_deduction', p_price_ngn, 'currency', 'NGN')
   )
   RETURNING id INTO v_order_id;
 
-  -- 5. Log Transaction
   INSERT INTO public.wallet_transactions (
-    wallet_id,
-    amount,
-    type,
-    reference,
-    description
+    wallet_id, amount, type, reference
   ) VALUES (
-    v_wallet_id,
-    -p_price_ngn, -- Negative for deduction
-    'purchase',
-    v_order_id::text,
-    'Purchase of ' || p_service_type || ' (' || p_country || ')'
+    v_wallet_id, -p_price_ngn, 'purchase', v_order_id::text
   );
 
   RETURN jsonb_build_object('success', true, 'order_id', v_order_id, 'new_balance', v_new_balance);
-
-EXCEPTION WHEN OTHERS THEN
-  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
 END;
 $$;
 
 -- Function to Process Order Refund (Atomic Refund + Status Update)
+-- Checks orders.status = 'refunded' (SMS lifecycle) before crediting
+-- Uses wallet_id for wallet_transactions. No EXCEPTION WHEN OTHERS.
 CREATE OR REPLACE FUNCTION process_order_refund(
   p_order_id uuid
 )
@@ -89,74 +68,86 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 AS $$
 DECLARE
-  v_order RECORD;
+  v_user_id uuid;
   v_wallet_id uuid;
+  v_payment_status text;
+  v_order_status text;
+  v_price_usd numeric;
+  v_wallet_deduction numeric;
   v_refund_amount numeric;
+  v_current_balance numeric;
 BEGIN
-  -- 1. Lock Order Row
-  SELECT * INTO v_order
+  SELECT user_id, status, payment_status, price_usd, 
+         (metadata->>'wallet_deduction')::numeric
+  INTO v_user_id, v_order_status, v_payment_status, v_price_usd, v_wallet_deduction
   FROM public.orders
-  WHERE id = p_order_id
+  WHERE orders.id = p_order_id
   FOR UPDATE;
 
-  IF v_order IS NULL THEN
+  IF v_user_id IS NULL THEN
     RETURN jsonb_build_object('success', false, 'message', 'Order not found');
   END IF;
 
-  -- 2. Validate Refund Eligibility
-  -- User req: "Only refunds orders with status = 'pending'"
-  -- But we might want to also allow refunding 'failed' if it wasn't refunded yet?
-  -- Sticking to 'pending' as strict requirement, but maybe 'paid' if I used that status earlier?
-  -- I used 'pending' in process_purchase.
-  IF v_order.payment_status != 'pending' THEN
-    RETURN jsonb_build_object('success', false, 'message', 'Order status is not pending, cannot refund');
+  IF v_order_status != 'refunded' THEN
+    RETURN jsonb_build_object('success', false, 'message', 
+      'Order SMS status is not refunded (status: ' || COALESCE(v_order_status, 'null') || ')');
   END IF;
 
-  -- 3. Get Refund Amount from Metadata
-  -- We stored 'wallet_deduction' in metadata in process_purchase
-  v_refund_amount := (v_order.metadata->>'wallet_deduction')::numeric;
-  
-  IF v_refund_amount IS NULL OR v_refund_amount <= 0 THEN
-     RETURN jsonb_build_object('success', false, 'message', 'No valid refund amount found in metadata');
+  IF v_payment_status = 'refunded' THEN
+    RETURN jsonb_build_object('success', false, 'message', 'Already refunded (payment_status)');
   END IF;
 
-  -- 4. Get Wallet
-  SELECT id INTO v_wallet_id
-  FROM public.wallets
-  WHERE user_id = v_order.user_id;
+  SELECT w.id INTO v_wallet_id
+  FROM public.wallets w
+  WHERE w.user_id = v_user_id
+  FOR UPDATE;
 
   IF v_wallet_id IS NULL THEN
-     RETURN jsonb_build_object('success', false, 'message', 'User wallet not found');
+    RETURN jsonb_build_object('success', false, 'message', 'User wallet not found');
   END IF;
 
-  -- 5. Refund Wallet
-  UPDATE public.wallets
-  SET balance = balance + v_refund_amount, updated_at = now()
-  WHERE id = v_wallet_id;
+  IF EXISTS (
+    SELECT 1 FROM public.wallet_transactions wt
+    WHERE wt.reference = p_order_id::text 
+      AND wt.type = 'refund'
+  ) THEN
+    UPDATE public.orders 
+    SET payment_status = 'refunded', updated_at = now()
+    WHERE orders.id = p_order_id;
+    RETURN jsonb_build_object('success', false, 'message', 'Already refunded (transaction exists)');
+  END IF;
 
-  -- 6. Update Order Status
-  UPDATE public.orders
-  SET payment_status = 'refunded', updated_at = now() -- Assuming updated_at exists, if not ignore or add it
-  WHERE id = p_order_id;
+  v_refund_amount := v_wallet_deduction;
+  IF v_refund_amount IS NULL OR v_refund_amount <= 0 THEN
+    v_refund_amount := v_price_usd;
+  END IF;
+  
+  IF v_refund_amount IS NULL OR v_refund_amount <= 0 THEN
+    RETURN jsonb_build_object('success', false, 'message', 'No valid refund amount found');
+  END IF;
 
-  -- 7. Log Transaction
   INSERT INTO public.wallet_transactions (
-    wallet_id,
-    amount,
-    type,
-    reference,
-    description
+    wallet_id, amount, type, reference
   ) VALUES (
-    v_wallet_id,
-    v_refund_amount,
-    'refund',
-    p_order_id::text,
-    'Refund for order ' || p_order_id
+    v_wallet_id, v_refund_amount, 'refund', p_order_id::text
   );
 
-  RETURN jsonb_build_object('success', true, 'message', 'Refund processing complete');
+  UPDATE public.wallets
+  SET balance = balance + v_refund_amount, updated_at = now()
+  WHERE wallets.id = v_wallet_id;
 
-EXCEPTION WHEN OTHERS THEN
-  RETURN jsonb_build_object('success', false, 'message', SQLERRM);
+  SELECT balance INTO v_current_balance
+  FROM public.wallets WHERE wallets.id = v_wallet_id;
+
+  UPDATE public.orders
+  SET payment_status = 'refunded', updated_at = now()
+  WHERE orders.id = p_order_id;
+
+  RETURN jsonb_build_object(
+    'success', true, 
+    'message', 'Refund processed', 
+    'amount', v_refund_amount,
+    'new_balance', v_current_balance
+  );
 END;
 $$;

@@ -29,7 +29,7 @@ export interface SMSLog {
 export interface AppState {
   user: User | null;
   balance: number;
-  totalSpent: number;
+
   activeNumbers: VirtualNumber[];
   transactions: any[];
   isAuthenticated: boolean;
@@ -38,7 +38,8 @@ export interface AppState {
 export interface Wallet {
   id: string;
   user_id: string;
-  balance: number;
+  balance_kobo: number;
+  locked_balance: number;
   currency: string;
 }
 
