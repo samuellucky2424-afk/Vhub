@@ -5,7 +5,13 @@ const SMSPOOL_API_KEY = Deno.env.get("SMSPOOL_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+        detectSessionInUrl: false
+    }
+});
 
 const corsHeaders = {
     'Access-Control-Allow-Origin': '*',
@@ -145,6 +151,8 @@ serve(async (req) => {
             const { service_type, country, service_id, country_id } = payload;
             if (!service_type || !country) return new Response(JSON.stringify({ success: false, message: "Missing service or country" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
+            console.log(`[Wallet] Authenticated user ID: ${user.id}, email: ${user.email}`);
+
             // 2. Get live pricing
             const priceResp = await fetch(`https://api.smspool.net/request/price?key=${SMSPOOL_API_KEY}&country=${country_id || country}&service=${service_id || service_type}`);
             const priceData = await priceResp.json();
@@ -158,18 +166,42 @@ serve(async (req) => {
             const price_ngn = Math.round(price_usd * USD_TO_NGN_RATE);
             const price_kobo = price_ngn * 100;
 
+            console.log(`[Wallet] DEBUG PRICING: rawUSD=${rawUSD}, markup=${markup}, price_usd=${price_usd}, rate=${USD_TO_NGN_RATE}, price_ngn=${price_ngn}, price_kobo=${price_kobo}`);
             console.log(`[Wallet] User ${user.id} requesting ${service_type}. Cost: ₦${price_ngn} (${price_kobo} kobo)`);
 
-            // 3. Pre-flight balance check (non-deducting, to fail fast)
-            const { data: walletCheck } = await supabase
-                .from('wallets')
-                .select('balance_kobo')
-                .eq('user_id', user.id)
-                .single();
+            // 3. Pre-flight balance check via RPC (bypasses RLS via SECURITY DEFINER)
+            const { data: walletInfo, error: walletRpcError } = await supabase.rpc('get_wallet_balance', {
+                p_user_id: user.id
+            });
 
-            if (!walletCheck || (walletCheck.balance_kobo ?? 0) < price_kobo) {
-                console.log(`[Wallet] Insufficient funds. Balance: ${walletCheck?.balance_kobo ?? 0}, Required: ${price_kobo}`);
-                return new Response(JSON.stringify({ success: false, message: "Insufficient funds" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            console.log(`[Wallet] RPC get_wallet_balance result:`, JSON.stringify(walletInfo), `error:`, JSON.stringify(walletRpcError));
+
+            if (walletRpcError) {
+                console.error(`[Wallet] RPC error: ${walletRpcError.message}`, JSON.stringify(walletRpcError));
+                return new Response(JSON.stringify({ success: false, message: `Wallet service error: ${walletRpcError.message}`, debug: { code: walletRpcError.code, details: walletRpcError.details, hint: walletRpcError.hint } }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            if (!walletInfo || !walletInfo.found) {
+                console.error(`[Wallet] Wallet not found for user ${user.id} even after auto-create`);
+                return new Response(JSON.stringify({ success: false, message: `Wallet not found. Please contact support.` }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            // Read balance — use balance_kobo if available, otherwise convert legacy balance (NGN) to kobo
+            let actualBalanceKobo: number = 0;
+            if (walletInfo.balance_kobo != null && Number(walletInfo.balance_kobo) > 0) {
+                actualBalanceKobo = Number(walletInfo.balance_kobo);
+            } else if (walletInfo.balance != null && Number(walletInfo.balance) > 0) {
+                actualBalanceKobo = Math.round(Number(walletInfo.balance) * 100);
+                console.log(`[Wallet] Using legacy balance: ${walletInfo.balance} NGN = ${actualBalanceKobo} kobo`);
+            }
+
+            console.log(`[Wallet] Balance: ${actualBalanceKobo} kobo, Required: ${price_kobo} kobo`);
+
+            if (actualBalanceKobo < price_kobo) {
+                return new Response(JSON.stringify({
+                    success: false,
+                    message: `Insufficient funds. Need ₦${price_ngn}, have ₦${(actualBalanceKobo / 100).toFixed(2)}`
+                }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
 
             // 4. Call SMSPool FIRST — with 15s timeout
