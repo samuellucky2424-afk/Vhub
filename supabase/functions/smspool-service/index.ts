@@ -126,12 +126,11 @@ serve(async (req) => {
             });
         }
 
-        // --- NEW: Wallet Purchase Action ---
+        // --- PROVIDER-FIRST WALLET PURCHASE (Safe Flow) ---
         if (action === 'purchase_wallet') {
-            // 1. Authenticate User - accept token from body or Authorization header
+            // 1. Authenticate User
             const authHeader = req.headers.get('Authorization');
             const headerToken = authHeader ? authHeader.replace('Bearer ', '') : null;
-            // Prefer user_token from body (when anon key is used for relay auth)
             const token = payload.user_token || headerToken;
 
             if (!token) return new Response(JSON.stringify({ success: false, message: "Missing authentication token" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -144,7 +143,7 @@ serve(async (req) => {
             }
 
             const { service_type, country, service_id, country_id } = payload;
-            if (!service_type || !country) return new Response("Missing service or country", { status: 400, headers: corsHeaders });
+            if (!service_type || !country) return new Response(JSON.stringify({ success: false, message: "Missing service or country" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
             // 2. Get live pricing
             const priceResp = await fetch(`https://api.smspool.net/request/price?key=${SMSPOOL_API_KEY}&country=${country_id || country}&service=${service_id || service_type}`);
@@ -152,24 +151,81 @@ serve(async (req) => {
 
             if (!priceData.price) return new Response(JSON.stringify({ success: false, message: "Service unavailable or no price" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-            // Ensure getExchangeRate is defined in scope or call checking logic
             const USD_TO_NGN_RATE = await getExchangeRate();
             const rawUSD = parseFloat(priceData.price);
             const markup = 1.45;
             const price_usd = rawUSD * markup;
             const price_ngn = Math.round(price_usd * USD_TO_NGN_RATE);
-            const price_kobo = price_ngn * 100; // Convert NGN to kobo for DB
+            const price_kobo = price_ngn * 100;
 
-            console.log(`[Wallet] Purchasing ${service_type} for User ${user.id}. Cost: ₦${price_ngn} (${price_kobo} kobo)`);
+            console.log(`[Wallet] User ${user.id} requesting ${service_type}. Cost: ₦${price_ngn} (${price_kobo} kobo)`);
 
-            // 3. Call process_purchase RPC (Atomic Deduction + Order)
-            const { data: purchaseResult, error: rpcError } = await supabase.rpc('process_purchase', {
+            // 3. Pre-flight balance check (non-deducting, to fail fast)
+            const { data: walletCheck } = await supabase
+                .from('wallets')
+                .select('balance_kobo')
+                .eq('user_id', user.id)
+                .single();
+
+            if (!walletCheck || (walletCheck.balance_kobo ?? 0) < price_kobo) {
+                console.log(`[Wallet] Insufficient funds. Balance: ${walletCheck?.balance_kobo ?? 0}, Required: ${price_kobo}`);
+                return new Response(JSON.stringify({ success: false, message: "Insufficient funds" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            // 4. Call SMSPool FIRST — with 15s timeout
+            //    Wallet is NOT touched yet. If this fails, user loses nothing.
+            let poolData: any;
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 15000);
+
+                const poolUrl = `https://api.smspool.net/purchase/sms?key=${SMSPOOL_API_KEY}&country=${country_id}&service=${service_id}`;
+                console.log(`[Wallet] Calling SMSPool (15s timeout)...`);
+
+                const poolResp = await fetch(poolUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+
+                poolData = await poolResp.json();
+                console.log(`[Wallet] SMSPool response:`, JSON.stringify(poolData));
+
+                if (!(poolData.success === 1 || (poolData.number && !poolData.error))) {
+                    // Provider refused — no number available
+                    const msg = poolData.message || "SMSPool: No numbers available for this service";
+                    console.log(`[Wallet] Provider refused: ${msg}`);
+                    return new Response(JSON.stringify({ success: false, message: msg }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                }
+            } catch (providerError: any) {
+                // Timeout or network error — wallet NOT touched
+                const isTimeout = providerError.name === 'AbortError';
+                const msg = isTimeout
+                    ? "Provider did not respond within 15 seconds. Please try again."
+                    : `Provider error: ${providerError.message}`;
+                console.error(`[Wallet] Provider failed (timeout=${isTimeout}):`, providerError.message);
+                return new Response(JSON.stringify({ success: false, message: msg }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
+
+            // 5. Provider confirmed! Extract number details.
+            const phoneNumber = poolData.number || poolData.phonenumber;
+            const smsPoolOrderId = poolData.order_id;
+            const purchaseRef = `WAL-${crypto.randomUUID()}`;
+
+            console.log(`[Wallet] Provider confirmed number: ${phoneNumber}, SMSPool Order: ${smsPoolOrderId}. Running atomic transaction...`);
+
+            // 6. ATOMIC: deduct wallet + create order + create verification in ONE transaction
+            //    If ANY step fails, the entire transaction rolls back — no partial state.
+            const { data: atomicResult, error: atomicError } = await supabase.rpc('atomic_purchase_verification', {
                 p_user_id: user.id,
                 p_service_type: service_type,
                 p_country: country,
+                p_country_id: country_id || '',
+                p_service_id: service_id || '',
                 p_price_kobo: price_kobo,
                 p_exchange_rate: USD_TO_NGN_RATE,
+                p_phone_number: phoneNumber,
+                p_smspool_order_id: smsPoolOrderId.toString(),
+                p_payment_reference: purchaseRef,
                 p_metadata: {
+                    ...poolData,
                     countryId: country_id,
                     serviceId: service_id,
                     source: 'wallet',
@@ -180,81 +236,49 @@ serve(async (req) => {
                 }
             });
 
-            if (rpcError) {
-                console.error("RPC Error:", JSON.stringify(rpcError));
-                return new Response(JSON.stringify({ success: false, message: rpcError.message || "Transaction failed", error: rpcError.message, details: rpcError.details, hint: rpcError.hint, code: rpcError.code }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-            }
+            if (atomicError || !atomicResult?.success) {
+                // Atomic transaction failed — wallet was NOT deducted (auto-rollback)
+                // Cancel the SMSPool order so the number isn't wasted
+                const errMsg = atomicResult?.message || atomicError?.message || "Transaction failed";
+                console.error(`[Wallet] Atomic transaction failed: ${errMsg}. Cancelling SMSPool order ${smsPoolOrderId}...`);
 
-            if (!purchaseResult.success) {
-                return new Response(JSON.stringify({ success: false, message: purchaseResult.message }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-            }
-
-            const orderId = purchaseResult.order_id;
-            console.log(`[Wallet] Deduction success. Order ID: ${orderId}. Calling SMSPool...`);
-
-            // 4. Call SMSPool Purchase
-            try {
-                const poolUrl = `https://api.smspool.net/purchase/sms?key=${SMSPOOL_API_KEY}&country=${country_id}&service=${service_id}`;
-                const poolResp = await fetch(poolUrl);
-                const poolData = await poolResp.json();
-
-                if (poolData.success === 1 || (poolData.number && !poolData.error)) {
-                    // Success!
-                    const phoneNumber = poolData.number || poolData.phonenumber;
-                    const smsPoolOrderId = poolData.order_id;
-
-                    // Update Order and Insert Verification
-                    await supabase.from('orders').update({
-                        payment_status: 'pending', // Waiting for OTP
-                        request_id: smsPoolOrderId.toString(),
-                        sms_code: null,
-                        metadata: {
-                            ...poolData,
-                            phonenumber: phoneNumber,
-                            smspool_order_id: smsPoolOrderId,
-                            status: 'waiting_otp'
-                        }
-                    }).eq('id', orderId);
-
-                    await supabase.from('verifications').insert({
-                        order_id: orderId,
-                        user_id: user.id,
-                        service_name: service_type,
-                        smspool_service_id: service_id,
-                        country_name: country,
-                        smspool_country_id: country_id,
-                        smspool_order_id: smsPoolOrderId,
-                        phone_number: phoneNumber,
-                        otp_code: "PENDING",
-                        full_sms: "Waiting for SMS...",
-                        received_at: new Date().toISOString()
-                    });
-
-                    return new Response(JSON.stringify({
-                        success: true,
-                        order_id: orderId,
-                        number: phoneNumber,
-                        message: "Number purchased successfully"
-                    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-                } else {
-                    throw new Error(poolData.message || "SMSPool purchase failed");
+                try {
+                    await fetch(`https://api.smspool.net/sms/cancel?key=${SMSPOOL_API_KEY}&orderid=${smsPoolOrderId}`);
+                    console.log(`[Wallet] SMSPool order ${smsPoolOrderId} cancelled.`);
+                } catch (cancelErr: any) {
+                    console.error(`[Wallet] Failed to cancel SMSPool order: ${cancelErr.message}`);
                 }
 
-            } catch (poolError) {
-                console.error("SMSPool Purchase Failed:", poolError);
+                // Log failure for monitoring
+                try {
+                    await supabase.rpc('log_failure', {
+                        p_user_id: user.id,
+                        p_action: 'purchase_wallet',
+                        p_error_message: errMsg,
+                        p_context: {
+                            smspool_order_id: smsPoolOrderId,
+                            phone_number: phoneNumber,
+                            price_kobo: price_kobo,
+                            payment_reference: purchaseRef,
+                            atomic_error: atomicError?.message || null
+                        }
+                    });
+                } catch (_logErr) {
+                    // Don't fail the response if logging fails
+                }
 
-                // 5. Refund Logic
-                const { data: refundResult, error: refundError } = await supabase.rpc('process_order_refund', {
-                    p_order_id: orderId
-                });
-
-                return new Response(JSON.stringify({
-                    success: false,
-                    message: `Purchase failed: ${poolError.message}`,
-                    refunded: refundResult?.success
-                }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                return new Response(JSON.stringify({ success: false, message: errMsg }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
+
+            const orderId = atomicResult.order_id;
+            console.log(`[Wallet] Atomic purchase complete! Order: ${orderId}, Number: ${phoneNumber}, New Balance: ${atomicResult.new_balance}`);
+
+            return new Response(JSON.stringify({
+                success: true,
+                order_id: orderId,
+                number: phoneNumber,
+                message: "Number purchased successfully"
+            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
         }
 
         if (action === 'purchase') {

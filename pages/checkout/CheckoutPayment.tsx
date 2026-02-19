@@ -65,6 +65,9 @@ const CheckoutPayment: React.FC = () => {
             // Use anon key for Edge Function relay auth (same pattern as other pages)
             // Pass user token in body for the function to verify internally
             const functionUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/smspool-service`;
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 20000); // 20s client timeout
+
             const response = await fetch(functionUrl, {
                 method: 'POST',
                 headers: {
@@ -78,8 +81,10 @@ const CheckoutPayment: React.FC = () => {
                     country: country,
                     country_id: countryId,
                     user_token: session.access_token
-                })
+                }),
+                signal: controller.signal
             });
+            clearTimeout(timeoutId);
 
             const data = await response.json();
 
@@ -114,8 +119,9 @@ const CheckoutPayment: React.FC = () => {
 
         } catch (err: any) {
             console.error('Wallet Purchase Error:', err);
-            // Check for insufficient funds explicitly if API returns it
-            if (err.message?.includes('Insufficient funds')) {
+            if (err.name === 'AbortError') {
+                setError('Request timed out. Your wallet was NOT charged. Please try again.');
+            } else if (err.message?.includes('Insufficient funds')) {
                 setError('Insufficient funds. Please top up your wallet.');
             } else {
                 setError(err.message || 'Failed to process wallet payment.');
