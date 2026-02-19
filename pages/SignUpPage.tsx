@@ -55,13 +55,7 @@ const SignUpPage: React.FC = () => {
     }
   };
 
-  const handleSocialLogin = () => {
-    setIsLoading(true);
-    setTimeout(() => {
-      login();
-      navigate('/dashboard');
-    }, 1000);
-  };
+
 
   return (
     <div className="bg-background-light dark:bg-background-dark min-h-screen flex flex-col font-display">
@@ -201,22 +195,7 @@ const SignUpPage: React.FC = () => {
                 </motion.button>
               </form>
 
-              <div className="mt-8 flex items-center gap-4">
-                <div className="h-[1px] flex-1 bg-[#e6e2db] dark:bg-white/10"></div>
-                <span className="text-xs text-[#897b61] uppercase tracking-widest font-bold">Or sign up with</span>
-                <div className="h-[1px] flex-1 bg-[#e6e2db] dark:bg-white/10"></div>
-              </div>
 
-              <div className="mt-6 grid grid-cols-2 gap-4">
-                <button onClick={handleSocialLogin} className="flex items-center justify-center gap-2 border border-[#e6e2db] dark:border-white/10 rounded-xl py-3 hover:bg-background-light dark:hover:bg-white/5 transition-all active:scale-95">
-                  <span className="font-bold text-lg text-blue-500">G</span>
-                  <span className="text-sm font-semibold text-[#181511] dark:text-white">Google</span>
-                </button>
-                <button onClick={handleSocialLogin} className="flex items-center justify-center gap-2 border border-[#e6e2db] dark:border-white/10 rounded-xl py-3 hover:bg-background-light dark:hover:bg-white/5 transition-all active:scale-95">
-                  <span className="material-symbols-outlined text-[#181511] dark:text-white">favorite</span>
-                  <span className="text-sm font-semibold text-[#181511] dark:text-white">Apple</span>
-                </button>
-              </div>
             </div>
             <div className="p-6 bg-background-light dark:bg-white/5 border-t border-[#e6e2db] dark:border-white/5 text-center">
               <p className="text-[#897b61] dark:text-gray-400 text-sm">
