@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useApp } from '../App';
 import { motion } from 'framer-motion';
 import { supabase } from '../src/lib/supabase';
@@ -7,13 +7,23 @@ import { supabase } from '../src/lib/supabase';
 const SignUpPage: React.FC = () => {
   const navigate = useNavigate();
   const { login } = useApp();
+  const [searchParams] = useSearchParams();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
+  const [referralCode, setReferralCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Pre-fill referral code from URL query param (e.g., /signup?ref=A9X2K)
+  useEffect(() => {
+    const refParam = searchParams.get('ref');
+    if (refParam) {
+      setReferralCode(refParam.slice(0, 5).toUpperCase().replace(/[^A-Z0-9]/g, ''));
+    }
+  }, [searchParams]);
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,6 +36,18 @@ const SignUpPage: React.FC = () => {
 
     if (password.length < 6) {
       setError("Password must be at least 6 characters");
+      return;
+    }
+
+    // Validate referral code format if provided
+    if (referralCode && referralCode.length !== 5) {
+      setError("Referral code must be exactly 5 characters");
+      return;
+    }
+
+    // Validate referral code format (uppercase letters and numbers only)
+    if (referralCode && !/^[A-Z0-9]{5}$/.test(referralCode)) {
+      setError("Referral code must be 5 characters (uppercase letters and numbers only)");
       return;
     }
 
@@ -45,6 +67,39 @@ const SignUpPage: React.FC = () => {
       setError(error.message);
       setIsLoading(false);
     } else {
+      // Post-signup: generate referral code for new user
+      const userId = data.user?.id;
+      if (userId) {
+        try {
+          // Generate a referral code for this new user
+          await supabase.rpc('generate_referral_code', { p_user_id: userId });
+        } catch (err) {
+          console.error('Failed to generate referral code:', err);
+          // Non-blocking — don't stop signup
+        }
+
+        // If they entered a referral code, record the usage
+        if (referralCode.trim()) {
+          try {
+            const { data: refData, error: refError } = await supabase.rpc('validate_and_use_referral_code', {
+              p_code: referralCode.trim(),
+              p_referred_user_id: userId
+            });
+
+            if (refError) {
+              console.warn('Referral code RPC failed:', refError.message);
+            } else {
+              const refResult = Array.isArray(refData) ? refData[0] : refData;
+              if (refResult && refResult.success === false) {
+                console.warn('Referral code issue:', refResult.message);
+              }
+            }
+          } catch (err) {
+            console.error('Failed to apply referral code:', err);
+          }
+        }
+      }
+
       if (data.session) {
         navigate('/dashboard');
       } else {
@@ -54,8 +109,6 @@ const SignUpPage: React.FC = () => {
       }
     }
   };
-
-
 
   return (
     <div className="bg-background-light dark:bg-background-dark min-h-screen flex flex-col font-display">
@@ -138,7 +191,7 @@ const SignUpPage: React.FC = () => {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-[#e6e2db] dark:border-white/10 bg-white dark:bg-background-dark text-[#181511] dark:text-white focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-medium"
-                        placeholder="••••••••"
+                        placeholder="••••••"
                         required
                       />
                     </div>
@@ -152,11 +205,33 @@ const SignUpPage: React.FC = () => {
                         value={confirmPassword}
                         onChange={(e) => setConfirmPassword(e.target.value)}
                         className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-[#e6e2db] dark:border-white/10 bg-white dark:bg-background-dark text-[#181511] dark:text-white focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-medium"
-                        placeholder="••••••••"
+                        placeholder="••••••"
                         required
                       />
                     </div>
                   </div>
+                </div>
+
+                {/* Referral Code (Optional) */}
+                <div className="space-y-2">
+                  <label className="text-[#181511] dark:text-white text-sm font-bold">
+                    Referral Code <span className="text-[#897b61] dark:text-gray-500 font-normal">(optional)</span>
+                  </label>
+                  <div className="relative group">
+                    <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#897b61] text-xl group-focus-within:text-primary transition-colors">loyalty</span>
+                    <input
+                      type="text"
+                      value={referralCode}
+                      onChange={(e) => {
+                        const value = e.target.value.slice(0, 5).toUpperCase();
+                        setReferralCode(value.replace(/[^A-Z0-9]/g, ''));
+                      }}
+                      className="w-full pl-12 pr-4 py-3.5 rounded-xl border border-[#e6e2db] dark:border-white/10 bg-white dark:bg-background-dark text-[#181511] dark:text-white focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition-all font-medium uppercase tracking-widest"
+                      placeholder="A9X2K"
+                      maxLength={5}
+                    />
+                  </div>
+                  <p className="text-xs text-[#897b61] dark:text-gray-500">Got a referral code from a friend? Enter it here!</p>
                 </div>
 
                 {error && (
@@ -194,8 +269,6 @@ const SignUpPage: React.FC = () => {
                   )}
                 </motion.button>
               </form>
-
-
             </div>
             <div className="p-6 bg-background-light dark:bg-white/5 border-t border-[#e6e2db] dark:border-white/5 text-center">
               <p className="text-[#897b61] dark:text-gray-400 text-sm">

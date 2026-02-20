@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../App';
 import { motion } from 'framer-motion';
@@ -10,10 +10,28 @@ const LoginPage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [showEmailConfirmed, setShowEmailConfirmed] = useState(false);
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    // Check if email was confirmed
+    const emailConfirmed = localStorage.getItem('emailConfirmed');
+    if (emailConfirmed === 'true') {
+      setShowEmailConfirmed(true);
+      localStorage.removeItem('emailConfirmed');
+      // Clear the message after 5 seconds
+      setTimeout(() => setShowEmailConfirmed(false), 5000);
+    }
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
+    setError('');
 
     const { error } = await supabase.auth.signInWithPassword({
       email,
@@ -21,7 +39,7 @@ const LoginPage: React.FC = () => {
     });
 
     if (error) {
-      alert(error.message);
+      setError(error.message);
       setIsLoading(false);
     } else {
       // Success - app listener will redirect/update state
@@ -29,7 +47,29 @@ const LoginPage: React.FC = () => {
     }
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setForgotPasswordLoading(true);
+    setError('');
+    setMessage('');
 
+    const { error } = await supabase.auth.resetPasswordForEmail(forgotPasswordEmail, {
+      redirectTo: 'https://www.luckyv-num.store/#/reset-password'
+    });
+
+    if (error) {
+      setError(error.message);
+    } else {
+      setMessage('Password reset link sent! Check your email.');
+      setForgotPasswordEmail('');
+      // Hide forgot password form after 3 seconds
+      setTimeout(() => {
+        setShowForgotPassword(false);
+        setMessage('');
+      }, 3000);
+    }
+    setForgotPasswordLoading(false);
+  };
 
   return (
     <div className="bg-background-light dark:bg-background-dark min-h-screen flex flex-col font-display">
@@ -70,6 +110,52 @@ const LoginPage: React.FC = () => {
                 <p className="text-[#897b61] dark:text-gray-400">Access your virtual number dashboard</p>
               </div>
 
+              {/* Email Confirmation Success Message */}
+              {showEmailConfirmed && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-green-600 dark:text-green-400">check_circle</span>
+                    <div>
+                      <p className="text-green-800 dark:text-green-200 font-semibold">Email Confirmed Successfully!</p>
+                      <p className="text-green-600 dark:text-green-400 text-sm">You can now log in to your account.</p>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* General Error Message */}
+              {error && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-red-600 dark:text-red-400">error</span>
+                    <p className="text-red-800 dark:text-red-200">{error}</p>
+                  </div>
+                </motion.div>
+              )}
+
+              {/* Forgot Password Success Message */}
+              {message && (
+                <motion.div
+                  initial={{ opacity: 0, y: -10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg"
+                >
+                  <div className="flex items-center gap-3">
+                    <span className="material-symbols-outlined text-blue-600 dark:text-blue-400">info</span>
+                    <p className="text-blue-800 dark:text-blue-200">{message}</p>
+                  </div>
+                </motion.div>
+              )}
+
               <form className="space-y-6" onSubmit={handleLogin}>
                 <div className="space-y-2">
                   <label className="text-[#181511] dark:text-white text-sm font-semibold">Email Address</label>
@@ -88,7 +174,13 @@ const LoginPage: React.FC = () => {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <label className="text-[#181511] dark:text-white text-sm font-semibold">Password</label>
-                    <a className="text-primary text-xs font-semibold hover:underline cursor-pointer">Forgot password?</a>
+                    <button 
+                      type="button" 
+                      onClick={() => setShowForgotPassword(true)}
+                      className="text-primary text-xs font-semibold hover:underline cursor-pointer"
+                    >
+                      Forgot password?
+                    </button>
                   </div>
                   <div className="relative group">
                     <span className="material-symbols-outlined absolute left-4 top-1/2 -translate-y-1/2 text-[#897b61] text-xl group-focus-within:text-primary transition-colors">lock</span>
@@ -126,6 +218,64 @@ const LoginPage: React.FC = () => {
                   )}
                 </motion.button>
               </form>
+
+              {/* Forgot Password Form */}
+              {showForgotPassword && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mt-6 p-6 bg-gray-50 dark:bg-zinc-800/50 rounded-lg border border-gray-200 dark:border-zinc-700"
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-semibold text-[#181511] dark:text-white">Reset Password</h3>
+                    <button
+                      onClick={() => {
+                        setShowForgotPassword(false);
+                        setError('');
+                        setMessage('');
+                      }}
+                      className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                    >
+                      <span className="material-symbols-outlined">close</span>
+                    </button>
+                  </div>
+                  <form onSubmit={handleForgotPassword} className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium text-[#181511] dark:text-white mb-2">
+                        Email Address
+                      </label>
+                      <input
+                        type="email"
+                        value={forgotPasswordEmail}
+                        onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                        className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-[#181511] dark:text-white focus:ring-2 focus:ring-primary focus:border-transparent outline-none"
+                        placeholder="Enter your email"
+                        required
+                      />
+                    </div>
+                    <motion.button
+                      type="submit"
+                      disabled={forgotPasswordLoading}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                      className="w-full bg-primary hover:bg-primary/90 text-white font-semibold py-2 rounded-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {forgotPasswordLoading ? (
+                        <>
+                          <div className="size-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          Sending...
+                        </>
+                      ) : (
+                        <>
+                          <span className="material-symbols-outlined">send</span>
+                          Send Reset Link
+                        </>
+                      )}
+                    </motion.button>
+                  </form>
+                </motion.div>
+              )}
 
 
             </div>

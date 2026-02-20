@@ -9,6 +9,7 @@ import { AppProvider, useApp } from './src/context/AppContext';
 import LandingPage from './pages/LandingPage';
 import LoginPage from './pages/LoginPage';
 import SignUpPage from './pages/SignUpPage';
+import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import ActiveNumbers from './pages/ActiveNumbers';
 import Store from './pages/Store';
@@ -29,6 +30,7 @@ import ProductPage from './pages/ProductPage';
 // Layouts
 import AuthenticatedLayout from './components/AuthenticatedLayout';
 import { VerificationDisplay } from './src/components/VerificationDisplay';
+import ErrorBoundary from './src/components/ErrorBoundary';
 
 // Exporting useApp here for backward compatibility if needed, 
 // though imports should now come from context/AppContext
@@ -44,7 +46,7 @@ const ScrollToTop = () => {
 
 // Inner App Component that uses the context
 const AppContent: React.FC = () => {
-  const { isAuthenticated, loading } = useApp() as any; // Cast if type mismatch initially
+  const { isAuthenticated, loading, isRecoveryMode } = useApp() as any; // Cast if type mismatch initially
 
   if (loading) {
     return (
@@ -67,6 +69,7 @@ const AppContent: React.FC = () => {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/signup" element={<SignUpPage />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
         <Route path="/test-verification" element={<VerificationDisplay orderId="test-preview-id" />} />
 
         {/* Footer / Info Routes */}
@@ -88,7 +91,7 @@ const AppContent: React.FC = () => {
                 <div className="size-6 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
               </div>
             </div>
-          ) : isAuthenticated ? (
+          ) : isAuthenticated || isRecoveryMode ? (
             <AuthenticatedLayout />
           ) : (
             <Navigate to="/login" replace />
@@ -114,11 +117,13 @@ const AppContent: React.FC = () => {
 
 const App: React.FC = () => {
   return (
-    <AppProvider>
-      <HelmetProvider>
-        <AppContent />
-      </HelmetProvider>
-    </AppProvider>
+    <ErrorBoundary>
+      <AppProvider>
+        <HelmetProvider>
+          <AppContent />
+        </HelmetProvider>
+      </AppProvider>
+    </ErrorBoundary>
   );
 };
 

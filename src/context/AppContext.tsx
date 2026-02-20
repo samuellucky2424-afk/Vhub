@@ -20,24 +20,85 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     const [activeNumbers, setActiveNumbers] = useState<VirtualNumber[]>([]);
     const [balance, setBalance] = useState(0.00);
     const [wallet, setWallet] = useState<Wallet | null>(null);
-
     const [loading, setLoading] = useState(true);
+    const [isRecoveryMode, setIsRecoveryMode] = useState(false);
 
-    // Auth & Data Fetching Effect
+    // Auth & Data Fetching Effect - SINGLE INSTANCE
     useEffect(() => {
+        let mounted = true;
+        let currentUserId: string | null = null;
+        
+        // Check for recovery mode from URL hash on mount
+        const checkRecoveryMode = () => {
+            const hash = window.location.hash;
+            const params = new URLSearchParams(hash.split('?')[1] || '');
+            const type = params.get('type');
+            if (type === 'recovery') {
+                setIsRecoveryMode(true);
+            } else {
+                setIsRecoveryMode(false);
+            }
+        };
+        
+        checkRecoveryMode();
+        
+        // Listen for hash changes
+        window.addEventListener('hashchange', checkRecoveryMode);
+        
         // 1. Check Session
         supabase.auth.getSession().then(({ data: { session } }) => {
-            if (session?.user) {
-                mapUser(session.user);
-                fetchOrders(session.user.id);
+            if (mounted) {
+                if (session?.user) {
+                    currentUserId = session.user.id;
+                    mapUser(session.user);
+                    fetchOrders(session.user.id);
+                }
+                setLoading(false);
             }
-            setLoading(false);
         });
 
-        // 2. Listen for Auth Changes
+        // 2. Listen for Auth Changes - ONLY ONCE
         const {
             data: { subscription },
-        } = supabase.auth.onAuthStateChange((_event, session) => {
+        } = supabase.auth.onAuthStateChange(async (event, session) => {
+            if (!mounted) return;
+            
+            console.log('Auth state change:', event, session?.user?.email);
+            
+            // Handle password recovery
+            if (event === 'PASSWORD_RECOVERY') {
+                window.location.href = '/#/reset-password';
+                return;
+            }
+            
+            // Handle email confirmation
+            if (event === 'SIGNED_IN' && session?.user) {
+                const urlParams = new URLSearchParams(window.location.hash.split('?')[1] || '');
+                const type = urlParams.get('type');
+                
+                if (type === 'signup') {
+                    console.log('Email confirmed for user:', session.user.email);
+                    localStorage.setItem('emailConfirmed', 'true');
+                    window.location.href = '/#/login';
+                    return;
+                }
+            }
+            
+            // Prevent duplicate processing for same user
+            const newUserId = session?.user?.id || null;
+            if (newUserId === currentUserId && event === 'SIGNED_IN') {
+                console.log('Skipping duplicate SIGNED_IN for same user');
+                return;
+            }
+            
+            // Skip INITIAL_SESSION if we already have the same user
+            if (event === 'INITIAL_SESSION' && newUserId === currentUserId) {
+                console.log('Skipping duplicate INITIAL_SESSION for same user');
+                return;
+            }
+            
+            currentUserId = newUserId;
+            
             if (session?.user) {
                 mapUser(session.user);
                 fetchOrders(session.user.id);
@@ -48,7 +109,11 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
             setLoading(false);
         });
 
-        return () => subscription.unsubscribe();
+        return () => {
+            mounted = false;
+            window.removeEventListener('hashchange', checkRecoveryMode);
+            subscription.unsubscribe();
+        };
     }, []);
 
     const mapUser = (authUser: any) => {
@@ -89,34 +154,87 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         }
     };
 
+    // Initial wallet fetch when user is set (but not on INITIAL_SESSION)
     useEffect(() => {
-        if (user) {
+        if (user?.id) {
             fetchWallet();
-
-            const channel = supabase
-                .channel('wallet-changes')
-                .on(
-                    'postgres_changes',
-                    { event: '*', schema: 'public', table: 'wallets', filter: `user_id=eq.${user.id}` },
-                    (payload) => {
-                        console.log('App: Wallet update received', payload);
-                        if (payload.new) {
-                            const updated = payload.new as Wallet;
-                            setWallet(updated);
-                            setBalance(koboToNaira(Number(updated.balance_kobo ?? 0)));
-                            console.log('Wallet raw kobo:', updated.balance_kobo);
-                            console.log('Wallet formatted:', formatNaira(updated.balance_kobo ?? 0));
-                        }
-                    }
-                )
-                .subscribe((status) => {
-                    console.log('App: Wallet subscription status', status);
-                });
-
-            return () => {
-                supabase.removeChannel(channel);
-            };
         }
+    }, [user?.id]);
+
+    // Wallet Realtime Subscription - SINGLE INSTANCE WITH PROPER CLEANUP
+    useEffect(() => {
+        let mounted = true;
+        let walletChannel: any = null;
+        let retryCount = 0;
+        const maxRetries = 3;
+        
+        if (user?.id) {
+            console.log('App: Setting up wallet subscription for user', user.id);
+            
+            const createSubscription = () => {
+                // Clean up any existing subscription first
+                if (walletChannel) {
+                    supabase.removeChannel(walletChannel);
+                    walletChannel = null;
+                }
+                
+                // Create new subscription with timeout handling
+                walletChannel = supabase
+                    .channel(`wallet-changes-${user.id}`)
+                    .on(
+                        'postgres_changes',
+                        { 
+                            event: '*', 
+                            schema: 'public', 
+                            table: 'wallets', 
+                            filter: `user_id=eq.${user.id}` 
+                        },
+                        (payload) => {
+                            if (!mounted) {
+                                console.log('App: Wallet update received after unmount, ignoring');
+                                return;
+                            }
+                            
+                            console.log('App: Wallet update received', payload);
+                            if (payload.new) {
+                                const updated = payload.new as Wallet;
+                                setWallet(updated);
+                                setBalance(koboToNaira(Number(updated.balance_kobo ?? 0)));
+                                console.log('Wallet raw kobo:', updated.balance_kobo);
+                                console.log('Wallet formatted:', formatNaira(updated.balance_kobo ?? 0));
+                            }
+                        }
+                    )
+                    .subscribe((status, err) => {
+                        if (!mounted) return;
+                        
+                        console.log('App: Wallet subscription status', status, err);
+                        
+                        if (status === 'SUBSCRIBED') {
+                            retryCount = 0; // Reset retry count on success
+                        } else if (status === 'TIMED_OUT' || status === 'CLOSED') {
+                            if (retryCount < maxRetries) {
+                                retryCount++;
+                                console.log(`App: Retrying wallet subscription (${retryCount}/${maxRetries})`);
+                                setTimeout(createSubscription, 2000 * retryCount); // Exponential backoff
+                            } else {
+                                console.error('App: Wallet subscription failed after max retries');
+                            }
+                        }
+                    });
+            };
+            
+            createSubscription();
+        }
+
+        return () => {
+            mounted = false;
+            if (walletChannel) {
+                console.log('App: Cleaning up wallet subscription');
+                supabase.removeChannel(walletChannel);
+                walletChannel = null;
+            }
+        };
     }, [user?.id]);
 
     const fetchOrders = async (userId: string) => {
@@ -181,8 +299,17 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     };
 
     const logout = async () => {
-        await supabase.auth.signOut();
-        setUser(null);
+        try {
+            await supabase.auth.signOut();
+        } catch (error) {
+            console.error('Logout error:', error);
+        } finally {
+            // Always clean up state regardless of signOut success
+            setUser(null);
+            setActiveNumbers([]);
+            setWallet(null);
+            setBalance(0);
+        }
     };
 
     const addNumber = (newNumber: VirtualNumber) => {
@@ -204,21 +331,22 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
     return (
         <AppContext.Provider value={{
             user,
-            balance,
-
             activeNumbers,
-            transactions: [],
-            isAuthenticated,
+            balance,
+            wallet,
             loading,
+            isRecoveryMode,
+            isAuthenticated,
             login,
             logout,
             addNumber,
             deductBalance,
             refreshNumbers,
-            wallet,
             fetchWallet
         }}>
             {children}
         </AppContext.Provider>
     );
 };
+
+export default AppContext;
