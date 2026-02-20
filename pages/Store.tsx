@@ -12,7 +12,8 @@ const Store: React.FC = () => {
         description: "Scale your sales with a robust online store fully integrated with virtual number APIs.",
         price: 1499,
         icon: "shopping_cart",
-        popular: true
+        popular: true,
+        needsWarning: false
     },
     {
         id: 2,
@@ -20,7 +21,8 @@ const Store: React.FC = () => {
         description: "Showcase your professional work or agency with a sleek, responsive design.",
         price: 799,
         icon: "brush",
-        popular: false
+        popular: false,
+        needsWarning: false
     }
   ];
 
@@ -71,6 +73,14 @@ const Store: React.FC = () => {
                     <div className="p-6 flex-1 flex flex-col">
                         <h3 className="text-xl font-bold mb-2">{service.name}</h3>
                         <p className="text-gray-500 dark:text-gray-400 text-sm mb-4 line-clamp-3 flex-1">{service.description}</p>
+                        {service.needsWarning && (
+                            <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                                <p className="text-xs text-amber-700 dark:text-amber-400 leading-relaxed">
+                                    <span className="material-symbols-outlined text-sm align-middle mr-1">info</span>
+                                    If the number doesn't work on WhatsApp, you can purchase another number or get a refund to your wallet.
+                                </p>
+                            </div>
+                        )}
                         <div className="flex items-center justify-between mt-6">
                             <div className="flex flex-col">
                                 <span className="text-xs text-gray-400 uppercase font-bold tracking-tighter">Starts at</span>

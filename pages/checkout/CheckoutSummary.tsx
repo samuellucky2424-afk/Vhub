@@ -171,6 +171,25 @@ const CheckoutSummary: React.FC = () => {
             </div>
 
             <div className="flex flex-col lg:flex-row gap-8">
+                {/* Warning Banner for WhatsApp Services */}
+                {selectedService && (() => {
+                    const serviceName = services.find(s => s.ID.toString() === selectedService)?.name || '';
+                    const isWhatsAppService = serviceName.toLowerCase().includes('whatsapp');
+                    if (!isWhatsAppService) return null;
+                    return (
+                        <div className="lg:col-span-2 mb-6">
+                            <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl p-4 flex items-start gap-3">
+                                <span className="material-symbols-outlined text-amber-600 dark:text-amber-400 text-xl mt-0.5">info</span>
+                                <div className="flex-1">
+                                    <p className="text-sm text-amber-800 dark:text-amber-300 leading-relaxed">
+                                        If the number you purchase doesn't work on WhatsApp, please exercise patience or purchase another number. You'll receive a refund immediately once the number expires. As long as you haven't received any OTP, you'll get a refund automatically.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    );
+                })()}
+
                 <div className="flex-1 space-y-6">
                     <button onClick={() => navigate('/dashboard')} className="flex items-center gap-2 text-sm text-slate-500 hover:text-primary transition-colors font-medium px-1">
                         <span className="material-symbols-outlined text-lg">arrow_back</span>
