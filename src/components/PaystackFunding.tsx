@@ -16,8 +16,8 @@ const PaystackFunding: React.FC = () => {
     const handleFundWallet = () => {
         const amountNGN = Number(amount) || 0;
 
-        if (amountNGN < 100) {
-            setMessage({ type: 'error', text: 'Minimum amount is ₦100' });
+        if (amountNGN < 2000) {
+            setMessage({ type: 'error', text: 'Minimum deposit is ₦2,000' });
             return;
         }
 
@@ -111,10 +111,10 @@ const PaystackFunding: React.FC = () => {
                             placeholder="1000"
                             value={amount}
                             onChange={(e) => setAmount(Number(e.target.value))}
-                            min={100}
+                            min={2000}
                         />
                     </div>
-                    <p className="text-xs text-slate-500 mt-1">Minimum ₦100</p>
+                    <p className="text-xs text-slate-500 mt-1">Minimum ₦2,000</p>
                 </div>
 
                 {message && (
@@ -132,9 +132,9 @@ const PaystackFunding: React.FC = () => {
                 <div className="w-full">
                     <button
                         onClick={handleFundWallet}
-                        disabled={loading || !amount || Number(amount) < 100}
+                        disabled={loading || !amount || Number(amount) < 2000}
                         className={`w-full font-bold py-3 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 
-                    ${loading || !amount || Number(amount) < 100
+                    ${loading || !amount || Number(amount) < 2000
                                 ? 'bg-slate-200 dark:bg-zinc-800 text-slate-400 cursor-not-allowed shadow-none'
                                 : 'bg-primary hover:bg-primary/90 text-white active:scale-95'}`}
                     >

@@ -11,6 +11,7 @@ const ActiveNumbers: React.FC = () => {
     const [copiedCode, setCopiedCode] = useState<string | null>(null);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [checkingIds, setCheckingIds] = useState<Set<string>>(new Set());
+    const [countdowns, setCountdowns] = useState<Record<string, { remaining: number; percentage: number; active: boolean }>>({});
 
     const checkStatus = async (orderId: string) => {
         setCheckingIds(prev => new Set(prev).add(orderId));
@@ -127,6 +128,51 @@ const ActiveNumbers: React.FC = () => {
         };
     }, [activeNumbers.length]); // Re-run if number count changes (e.g. new purchase)
 
+    // Fetch countdown from backend API
+    useEffect(() => {
+        const fetchCountdowns = async () => {
+            const pendingOrders = activeNumbers.filter(n => 
+                (n.status === 'Pending' || n.status === 'Active') && 
+                n.number !== 'Processing...'
+            );
+
+            for (const order of pendingOrders) {
+                try {
+                    const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/countdown`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                        },
+                        body: JSON.stringify({ 
+                            action: 'get_countdown_status', 
+                            order_id: order.id 
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success && data.countdown) {
+                        setCountdowns(prev => ({
+                            ...prev,
+                            [order.id]: {
+                                remaining: data.countdown.time_remaining_seconds,
+                                percentage: 100 - data.countdown.percentage,
+                                active: data.countdown.active
+                            }
+                        }));
+                    }
+                } catch (err) {
+                    console.error(`[Countdown] Error fetching for ${order.id}:`, err);
+                }
+            }
+        };
+
+        fetchCountdowns();
+        const interval = setInterval(fetchCountdowns, 1000); // Refresh every 1 second
+        
+        return () => clearInterval(interval);
+    }, [activeNumbers]);
 
     // Helper to get latest log info
     const getLatestLog = (num: VirtualNumber) => {
@@ -205,6 +251,22 @@ const ActiveNumbers: React.FC = () => {
                                                 {num.status === 'Pending' && <span className="size-1.5 bg-amber-500 rounded-full animate-pulse"></span>}
                                                 {num.status}
                                             </span>
+                                            {/* Countdown Timer */}
+                                            {countdowns[num.id]?.active && (
+                                                <div className="mt-2">
+                                                    <div className="flex items-center justify-between text-xs mb-1">
+                                                        <span className={countdowns[num.id]!.remaining <= 10 ? 'text-red-500 font-bold animate-pulse' : 'text-amber-600'}>
+                                                            ⏱️ {countdowns[num.id]!.remaining}s
+                                                        </span>
+                                                    </div>
+                                                    <div className="w-full bg-slate-200 dark:bg-zinc-700 rounded-full h-1.5 overflow-hidden">
+                                                        <div 
+                                                            className={`h-full rounded-full transition-all duration-1000 ${countdowns[num.id]!.percentage > 75 ? 'bg-red-500' : countdowns[num.id]!.percentage > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                                            style={{ width: `${Math.min(countdowns[num.id]!.percentage, 100)}%` }}
+                                                        />
+                                                    </div>
+                                                </div>
+                                            )}
                                         </td>
                                         <td className="px-6 py-4">
                                             {latestLog?.code && latestLog.code !== 'PENDING' ? (
@@ -291,15 +353,31 @@ const ActiveNumbers: React.FC = () => {
                                         <p className="text-xs text-slate-500">{num.country}</p>
                                     </div>
                                 </div>
-                                <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-1 rounded-full ${num.status === 'Active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
-                                    num.status === 'Pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
-                                        num.status === 'Refunded' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
-                                            num.status === 'Failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
-                                                'bg-slate-100 text-slate-500'}`}>
-                                    {num.status === 'Active' && <span className="size-1.5 bg-emerald-500 rounded-full animate-pulse"></span>}
-                                    {num.status === 'Pending' && <span className="size-1.5 bg-amber-500 rounded-full animate-pulse"></span>}
-                                    {num.status}
-                                </span>
+                                <div className="text-right">
+                                    <span className={`inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-1 rounded-full ${num.status === 'Active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400' :
+                                        num.status === 'Pending' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
+                                            num.status === 'Refunded' ? 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400' :
+                                                num.status === 'Failed' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' :
+                                                    'bg-slate-100 text-slate-500'}`}>
+                                        {num.status === 'Active' && <span className="size-1.5 bg-emerald-500 rounded-full animate-pulse"></span>}
+                                        {num.status === 'Pending' && <span className="size-1.5 bg-amber-500 rounded-full animate-pulse"></span>}
+                                        {num.status}
+                                    </span>
+                                    {/* Mobile Countdown */}
+                                    {countdowns[num.id]?.active && (
+                                        <div className="mt-2 text-xs">
+                                            <span className={countdowns[num.id]!.remaining <= 10 ? 'text-red-500 font-bold' : 'text-amber-600'}>
+                                                ⏱️ {countdowns[num.id]!.remaining}s
+                                            </span>
+                                            <div className="w-20 bg-slate-200 dark:bg-zinc-700 rounded-full h-1 mt-1">
+                                                <div 
+                                                    className={`h-full rounded-full ${countdowns[num.id]!.percentage > 75 ? 'bg-red-500' : countdowns[num.id]!.percentage > 50 ? 'bg-amber-500' : 'bg-emerald-500'}`}
+                                                    style={{ width: `${Math.min(countdowns[num.id]!.percentage, 100)}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
                             </div>
 
                             {/* Number & Date */}

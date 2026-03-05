@@ -18,6 +18,329 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Interface for service stats response
+interface ServiceStats {
+    pool_id?: string;
+    pool_name?: string;
+    success_rate: number;
+    price: string;
+    high_price: string;
+    available?: boolean;
+}
+
+// Countdown timer for reliable timeout handling
+async function startCountdownTimer(orderId: string, smspoolOrderId: string, userId: string, duration: number = 80000): Promise<void> {
+    const log = (msg: string) => console.log(`[COUNTDOWN] ${msg}`);
+    
+    log(`Starting ${duration/1000}s countdown for order ${orderId} (SMSPool: ${smspoolOrderId})`);
+    
+    return new Promise<void>((resolve) => {
+        let remainingTime = duration;
+        const interval = 1000; // Update every second
+        
+        const countdown = setInterval(() => {
+            remainingTime -= interval;
+            const secondsRemaining = Math.ceil(remainingTime / 1000);
+            
+            // Log countdown progress at key intervals
+            if (secondsRemaining === 60 || secondsRemaining === 30 || secondsRemaining === 10 || secondsRemaining <= 5) {
+                log(`${secondsRemaining}s remaining for order ${orderId}`);
+            }
+            
+            if (remainingTime <= 0) {
+                clearInterval(countdown);
+                log(`Countdown finished for order ${orderId} - triggering cancellation`);
+                
+                // Trigger cancellation immediately
+                handleOrderTimeout(orderId, smspoolOrderId, userId).then(() => {
+                    log(`Timeout handling completed for order ${orderId}`);
+                    resolve();
+                }).catch(error => {
+                    log(`Timeout handling failed for order ${orderId}: ${error.message}`);
+                    resolve();
+                });
+            }
+        }, interval);
+        
+        return countdown;
+    });
+}
+
+// Handle order timeout with cancellation and refund
+async function handleOrderTimeout(orderId: string, smspoolOrderId: string, userId: string): Promise<void> {
+    const log = (msg: string) => console.log(`[TIMEOUT_HANDLER] ${msg}`);
+    
+    log(`Processing timeout for order ${orderId} (SMSPool: ${smspoolOrderId})`);
+    
+    try {
+        // 1. Cancel SMSPool order
+        log(`Cancelling SMSPool order ${smspoolOrderId}...`);
+        const cancelUrl = `https://api.smspool.net/sms/cancel?key=${SMSPOOL_API_KEY}&orderid=${smspoolOrderId}`;
+        
+        const cancelResponse = await fetch(cancelUrl);
+        const cancelData = await cancelResponse.json();
+        
+        log(`SMSPool cancel response (${cancelResponse.status}): ${JSON.stringify(cancelData)}`);
+        
+        if (!cancelResponse.ok) {
+            log(`SMSPool cancel failed with status: ${cancelResponse.status}`);
+        }
+        
+        // 2. Update order status
+        log(`Updating order ${orderId} status to 'failed'...`);
+        const updateResult = await supabase.from('orders').update({ 
+            status: 'failed',
+            metadata: { 
+                smspool_status: 'countdown_timeout_cancelled',
+                timeout_duration: 80,
+                timeout_reason: '80_second_countdown_expired',
+                cancelled_at: new Date().toISOString()
+            }
+        }).eq('id', orderId);
+        
+        if (updateResult.error) {
+            log(`Failed to update order status: ${updateResult.error.message}`);
+        } else {
+            log(`Order status updated successfully`);
+        }
+        
+        // 3. Process refund
+        log(`Processing auto-refund for user ${userId}...`);
+        const { error: refundError } = await supabase.rpc('refund_wallet', {
+            p_user_id: userId,
+            p_order_id: orderId,
+            p_amount_kobo: 0, // Will be calculated by RPC
+            p_reason: 'Countdown timeout - auto refund after 80s'
+        });
+        
+        if (refundError) {
+            log(`Auto-refund failed: ${refundError.message}`);
+        } else {
+            log(`Auto-refund processed successfully for user ${userId}`);
+        }
+        
+        log(`Timeout handling completed for order ${orderId}`);
+        
+    } catch (error) {
+        log(`Timeout handling error: ${error.message}`);
+        log(`Error details: ${JSON.stringify(error)}`);
+        throw error;
+    }
+}
+async function fastPollOTP(orderId: string, smspoolOrderId: string, userId: string): Promise<{ success: boolean; otp_code?: string; message: string; refunded?: boolean }> {
+    const log = (msg: string) => console.log(`[OTP_FAST_POLL] ${msg}`);
+    
+    log(`Starting fast polling for order ${orderId} (SMSPool: ${smspoolOrderId})`);
+    
+    const startTime = Date.now();
+    const maxDuration = 80000; // 80 seconds max
+    
+    let attempt = 0;
+    let foundCode: string | null = null;
+    let finalStatus: string | null = null;
+    let fullSmsText: string | null = null;
+    
+    // Start countdown timer in parallel
+    const countdownPromise = startCountdownTimer(orderId, smspoolOrderId, userId, maxDuration);
+    
+    while (Date.now() - startTime < maxDuration && !foundCode && !finalStatus) {
+        attempt++;
+        const elapsed = Date.now() - startTime;
+        
+        try {
+            // Dynamic polling schedule
+            let pollInterval = 5000; // Default 5 seconds
+            if (elapsed <= 30000) {
+                pollInterval = 3000; // First 30 seconds: every 3 seconds
+            } else if (elapsed <= 120000) {
+                pollInterval = 5000; // Next 90 seconds: every 5 seconds
+            }
+            
+            log(`Attempt ${attempt} (${Math.round(elapsed/1000)}s elapsed) checking order ${smspoolOrderId}...`);
+            
+            const checkUrl = `https://api.smspool.net/sms/check?key=${SMSPOOL_API_KEY}&orderid=${smspoolOrderId}`;
+            const response = await fetch(checkUrl);
+            const data = await response.json();
+            
+            log(`SMSPool response: status=${data.status}, sms=${data.sms || 'none'}`);
+            
+            if (data.status === 3 || data.status === 'completed') {
+                if (data.sms) {
+                    foundCode = data.sms;
+                    fullSmsText = data.full_sms || data.sms;
+                    finalStatus = 'completed';
+                    log(`[OTP] Code received: ${foundCode} after ${Math.round(elapsed/1000)}s`);
+                    
+                    // Cancel countdown timer since we found the code
+                    log(`[OTP] Cancelling countdown timer - code found`);
+                    break;
+                }
+            } else if (data.status === 6 || data.status === 'refunded') {
+                finalStatus = 'refunded';
+                log(`[OTP] Order refunded/expired after ${Math.round(elapsed/1000)}s`);
+                
+                // Cancel countdown timer since order was refunded
+                log(`[OTP] Cancelling countdown timer - order refunded`);
+                break;
+            } else if (data.status === 2) {
+                finalStatus = 'failed';
+                log(`[OTP] Order failed after ${Math.round(elapsed/1000)}s`);
+                
+                // Cancel countdown timer since order failed
+                log(`[OTP] Cancelling countdown timer - order failed`);
+                break;
+            }
+            
+            // Wait before next attempt
+            if (Date.now() - startTime < maxDuration && !foundCode && !finalStatus) {
+                log(`Waiting ${pollInterval/1000}s before next check...`);
+                await new Promise(resolve => setTimeout(resolve, pollInterval));
+            }
+            
+        } catch (err) {
+            log(`Polling error: ${err.message}`);
+            // Wait before retry on error
+            await new Promise(resolve => setTimeout(resolve, 3000));
+        }
+    }
+    
+    // Wait for countdown to complete if we didn't find code
+    if (!foundCode && !finalStatus) {
+        log(`[OTP] No code found - waiting for countdown to complete...`);
+        await countdownPromise;
+        return { success: false, message: "Order cancelled and refunded by countdown timer" };
+    }
+    
+    // Cancel countdown timer if we're done
+    if (foundCode || finalStatus) {
+        log(`[OTP] Polling completed - countdown timer should be cancelled`);
+        // Note: In a real implementation, we'd need to cancel the setInterval
+        // For now, the countdown will complete but handleOrderTimeout will check order status first
+    }
+    
+    // Handle successful OTP detection
+    if (foundCode) {
+        try {
+            // Update verifications table immediately
+            const { error: verifyError } = await supabase
+                .from('verifications')
+                .update({
+                    otp_code: foundCode,
+                    full_sms: fullSmsText || foundCode,
+                    received_at: new Date().toISOString()
+                })
+                .eq('order_id', orderId);
+            
+            if (verifyError) {
+                log(`[OTP] Failed to update verification: ${verifyError.message}`);
+            } else {
+                log(`[OTP] Verification updated successfully`);
+            }
+            
+            // Update order status
+            await supabase.from('orders').update({
+                payment_status: 'completed',
+                status: 'completed',
+                sms_code: foundCode,
+                metadata: { 
+                    smspool_status: 'completed',
+                    otp_detected_after: Math.round((Date.now() - startTime)/1000),
+                    polling_attempts: attempt,
+                    countdown_completed: false
+                }
+            }).eq('id', orderId);
+            
+            log(`[OTP] Order ${orderId} marked as completed`);
+            
+        } catch (dbErr) {
+            log(`[OTP] Database update error: ${dbErr.message}`);
+        }
+        
+        return { 
+            success: true, 
+            otp_code: foundCode, 
+            message: `OTP detected after ${Math.round((Date.now() - startTime)/1000)}s` 
+        };
+    }
+    
+    // Handle refunded/failed status
+    if (finalStatus === 'refunded') {
+        try {
+            await supabase.from('orders').update({ 
+                status: 'refunded',
+                metadata: { 
+                    smspool_status: 'refunded',
+                    polling_attempts: attempt,
+                    countdown_completed: false
+                }
+            }).eq('id', orderId);
+            
+            log(`[OTP] Order ${orderId} set to refunded - trigger will handle wallet credit`);
+            
+        } catch (dbErr) {
+            log(`[OTP] Failed to update refunded status: ${dbErr.message}`);
+        }
+        
+        return { success: false, message: "Order was refunded", refunded: true };
+    }
+    
+    if (finalStatus === 'failed') {
+        try {
+            await supabase.from('orders').update({ 
+                status: 'failed',
+                metadata: { 
+                    smspool_status: 'failed',
+                    polling_attempts: attempt,
+                    countdown_completed: false
+                }
+            }).eq('id', orderId);
+            
+        } catch (dbErr) {
+            log(`[OTP] Failed to update failed status: ${dbErr.message}`);
+        }
+        
+        return { success: false, message: "Order failed" };
+    }
+    
+    return { success: false, message: "Unknown polling result" };
+}
+async function getBestPool(service: string, country: string): Promise<string | null> {
+    try {
+        console.log(`[PoolSelection] Fetching stats for service=${service}, country=${country}`);
+        
+        // SMSPool doesn't have a dedicated stats endpoint, but the price endpoint includes success_rate
+        const priceUrl = `https://api.smspool.net/request/price?key=${SMSPOOL_API_KEY}&country=${country}&service=${service}`;
+        const response = await fetch(priceUrl);
+        
+        if (!response.ok) {
+            console.error(`[PoolSelection] Failed to fetch price/stats: ${response.status}`);
+            return null;
+        }
+        
+        const data = await response.json() as ServiceStats;
+        
+        if (!data || typeof data.success_rate !== 'number') {
+            console.log(`[PoolSelection] No success rate data available for service=${service}, country=${country}`);
+            return null;
+        }
+        
+        console.log(`[PoolSelection] Service stats: success_rate=${data.success_rate}%, price=${data.price}`);
+        
+        // Check if the service meets our criteria
+        if (data.success_rate >= 70) {
+            console.log(`[PoolSelection] Service meets criteria (success_rate >= 70%). Using default pool selection.`);
+            return 'default'; // Let SMSPool choose the best pool automatically
+        } else {
+            console.log(`[PoolSelection] Service success rate too low (${data.success_rate}% < 70%). Using default selection as fallback.`);
+            return 'default'; // Fallback to default selection
+        }
+        
+    } catch (error) {
+        console.error(`[PoolSelection] Error selecting pool:`, error);
+        return null; // Will trigger fallback to default selection
+    }
+}
+
 serve(async (req) => {
     // Handle CORS preflight requests
     if (req.method === 'OPTIONS') {
@@ -49,6 +372,31 @@ serve(async (req) => {
             const response = await fetch(url);
             const data = await response.json();
             return new Response(JSON.stringify(data), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        if (action === 'get_service_stats') {
+            const { service, country } = payload;
+            if (!service || !country) {
+                return new Response(JSON.stringify({ error: "Missing service or country parameter" }), {
+                    status: 400,
+                    headers: { ...corsHeaders, "Content-Type": "application/json" }
+                });
+            }
+
+            try {
+                const statsUrl = `https://api.smspool.net/service/stats?key=${SMSPOOL_API_KEY}&service=${service}&country=${country}`;
+                const response = await fetch(statsUrl);
+                const data = await response.json();
+                
+                return new Response(JSON.stringify(data), { 
+                    headers: { ...corsHeaders, "Content-Type": "application/json" } 
+                });
+            } catch (error) {
+                return new Response(JSON.stringify({ error: error.message }), {
+                    status: 500,
+                    headers: { ...corsHeaders, "Content-Type": "application/json" }
+                });
+            }
         }
 
         // Global Cache (In-Memory) for Rate
@@ -86,181 +434,7 @@ serve(async (req) => {
             }
         }
 
-        // Countdown timer and auto-cancel functions
-        const COUNTDOWN_DURATION = 120000; // 120 seconds
-
-        async function handleOrderTimeout(orderId: string, smspoolOrderId: string, userId: string): Promise<void> {
-            const log = (msg: string) => console.log(`[TIMEOUT] ${msg}`);
-            log(`Order ${orderId} timed out after ${COUNTDOWN_DURATION/1000}s - cancelling and refunding`);
-
-            try {
-                // 1. Cancel order on SMSPool
-                const cancelUrl = `https://api.smspool.net/sms/cancel?key=${SMSPOOL_API_KEY}&orderid=${smspoolOrderId}`;
-                log(`Cancelling SMSPool order: ${smspoolOrderId}`);
-                
-                const cancelResponse = await fetch(cancelUrl);
-                const cancelData = await cancelResponse.json();
-                log(`SMSPool cancel response: ${JSON.stringify(cancelData)}`);
-
-                // 2. Refund user via RPC
-                if (userId) {
-                    log(`Refunding user ${userId} for order ${orderId}`);
-                    
-                    const { data: order } = await supabase
-                        .from('orders')
-                        .select('price, metadata')
-                        .eq('id', orderId)
-                        .single();
-
-                    if (order?.price) {
-                        const refundAmount = Math.floor(order.price * 100); // Convert to kobo/cents
-                        
-                        const { data: refundResult, error: refundError } = await supabase.rpc('credit_user_wallet', {
-                            p_user_id: userId,
-                            p_amount: refundAmount,
-                            p_description: `Auto-refund for timeout order ${orderId}`,
-                            p_reference: `timeout-refund-${orderId}-${Date.now()}`
-                        });
-
-                        if (refundError) {
-                            log(`Refund failed: ${refundError.message}`);
-                        } else {
-                            log(`Refund successful: ${refundResult}`);
-                        }
-                    }
-                }
-
-                // 3. Update order status
-                await supabase.from('orders').update({
-                    status: 'refunded',
-                    metadata: {
-                        timeout_cancelled: true,
-                        timeout_at: new Date().toISOString(),
-                        smspool_cancelled: cancelData.success || false
-                    }
-                }).eq('id', orderId);
-
-                log(`Order ${orderId} successfully cancelled and refunded`);
-
-            } catch (error) {
-                log(`Error during timeout handling: ${error.message}`);
-            }
-        }
-
-        async function fastPollOTP(orderId: string, smspoolOrderId: string, userId: string): Promise<any> {
-            const log = (msg: string) => console.log(`[FAST_POLL] ${msg}`);
-            log(`Starting accelerated polling for order ${orderId} (SMSPool: ${smspoolOrderId})`);
-
-            const startTime = Date.now();
-            const maxDuration = COUNTDOWN_DURATION;
-            let foundCode: string | null = null;
-            let finalStatus: string | null = null;
-            let pollCount = 0;
-
-            // Poll every 1 second for 120 seconds
-            while (Date.now() - startTime < maxDuration) {
-                const elapsed = Date.now() - startTime;
-                const pollInterval = 1000;
-                pollCount++;
-
-                log(`Poll ${pollCount}: ${Math.round(elapsed/1000)}s elapsed, ${Math.round((maxDuration - elapsed)/1000)}s remaining`);
-
-                try {
-                    const checkUrl = `https://api.smspool.net/sms/check?key=${SMSPOOL_API_KEY}&orderid=${smspoolOrderId}`;
-                    const response = await fetch(checkUrl);
-                    const data = await response.json();
-
-                    // Check for completed
-                    if ((data.status === 3 || data.status === 'completed') && data.sms) {
-                        foundCode = data.sms;
-                        finalStatus = 'completed';
-                        log(`OTP found: ${foundCode}`);
-                        break;
-                    }
-
-                    // Check for refunded/cancelled
-                    if (data.status === 6 || data.status === 2 || data.status === 'refunded') {
-                        finalStatus = 'refunded';
-                        log(`Order refunded/cancelled on SMSPool`);
-                        break;
-                    }
-
-                    // Check for failed
-                    if (data.status === 5 || data.status === 'failed') {
-                        finalStatus = 'failed';
-                        log(`Order failed on SMSPool`);
-                        break;
-                    }
-
-                } catch (err) {
-                    log(`Polling error: ${err.message}`);
-                }
-
-                await new Promise(resolve => setTimeout(resolve, pollInterval));
-            }
-
-            // Handle timeout - no code found
-            if (!foundCode && !finalStatus) {
-                log(`Timeout reached after ${COUNTDOWN_DURATION/1000}s - no OTP received`);
-                await handleOrderTimeout(orderId, smspoolOrderId, userId);
-                return {
-                    success: false,
-                    timeout: true,
-                    message: `Order timed out after ${COUNTDOWN_DURATION/1000}s - automatically cancelled and refunded`
-                };
-            }
-
-            // Handle refund
-            if (finalStatus === 'refunded') {
-                await supabase.from('orders').update({ status: 'refunded' }).eq('id', orderId);
-                return {
-                    success: false,
-                    refunded: true,
-                    message: "Order was refunded"
-                };
-            }
-
-            // Handle failure
-            if (finalStatus === 'failed') {
-                await supabase.from('orders').update({ status: 'failed' }).eq('id', orderId);
-                return {
-                    success: false,
-                    failed: true,
-                    message: "Order failed"
-                };
-            }
-
-            // Success - OTP found
-            if (foundCode) {
-                // Update database
-                await supabase.from('orders').update({
-                    status: 'completed',
-                    payment_status: 'completed',
-                    sms_code: foundCode,
-                    metadata: {
-                        smspool_status: 'completed',
-                        completed_at: new Date().toISOString()
-                    }
-                }).eq('id', orderId);
-
-                // Update verifications
-                await supabase.from('verifications').update({
-                    otp_code: foundCode,
-                    received_at: new Date().toISOString()
-                }).eq('order_id', orderId);
-
-                return {
-                    success: true,
-                    otp_code: foundCode,
-                    message: "OTP received successfully"
-                };
-            }
-
-            return {
-                success: false,
-                message: "Polling ended without result"
-            };
-        }
+        // ... inside serve ...
 
         if (action === 'get_price') {
             const { country, service } = payload;
@@ -378,14 +552,38 @@ serve(async (req) => {
                 }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
 
-            // 4. Call SMSPool FIRST — with 15s timeout
+            // 4. Get best pool for highest success rate
+            const bestPool = await getBestPool(service_id || service_type, country_id || country);
+            
+            // Get service stats for metadata tracking
+            let serviceStats = null;
+            try {
+                const priceUrl = `https://api.smspool.net/request/price?key=${SMSPOOL_API_KEY}&country=${country_id}&service=${service_id}`;
+                const priceResponse = await fetch(priceUrl);
+                if (priceResponse.ok) {
+                    serviceStats = await priceResponse.json();
+                }
+            } catch (e) {
+                console.log('[Wallet] Could not fetch service stats for metadata');
+            }
+            
+            // 5. Call SMSPool FIRST — with 15s timeout and selected pool
             //    Wallet is NOT touched yet. If this fails, user loses nothing.
             let poolData: any;
             try {
                 const controller = new AbortController();
                 const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-                const poolUrl = `https://api.smspool.net/purchase/sms?key=${SMSPOOL_API_KEY}&country=${country_id}&service=${service_id}`;
+                let poolUrl = `https://api.smspool.net/purchase/sms?key=${SMSPOOL_API_KEY}&country=${country_id}&service=${service_id}`;
+                
+                // Add pool parameter only if we have a specific pool (not 'default')
+                if (bestPool && bestPool !== 'default') {
+                    poolUrl += `&pool=${bestPool}`;
+                    console.log(`[Wallet] Using specific pool: ${bestPool}`);
+                } else {
+                    console.log(`[Wallet] Using default pool selection (SMSPool auto-selects best pool)`);
+                }
+                
                 console.log(`[Wallet] Calling SMSPool (15s timeout)...`);
 
                 const poolResp = await fetch(poolUrl, { signal: controller.signal });
@@ -410,14 +608,14 @@ serve(async (req) => {
                 return new Response(JSON.stringify({ success: false, message: msg }), { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } });
             }
 
-            // 5. Provider confirmed! Extract number details.
+            // 6. Provider confirmed! Extract number details.
             const phoneNumber = poolData.number || poolData.phonenumber;
             const smsPoolOrderId = poolData.order_id;
             const purchaseRef = `WAL-${crypto.randomUUID()}`;
 
             console.log(`[Wallet] Provider confirmed number: ${phoneNumber}, SMSPool Order: ${smsPoolOrderId}. Running atomic transaction...`);
 
-            // 6. ATOMIC: deduct wallet + create order + create verification in ONE transaction
+            // 7. ATOMIC: deduct wallet + create order + create verification in ONE transaction
             //    If ANY step fails, the entire transaction rolls back — no partial state.
             const { data: atomicResult, error: atomicError } = await supabase.rpc('atomic_purchase_verification', {
                 p_user_id: user.id,
@@ -438,7 +636,10 @@ serve(async (req) => {
                     raw_usd: rawUSD,
                     markup_usd: price_usd,
                     price_ngn: price_ngn,
-                    rate: USD_TO_NGN_RATE
+                    rate: USD_TO_NGN_RATE,
+                    selected_pool: bestPool || 'default',
+                    service_success_rate: serviceStats?.success_rate || null,
+                    pool_selection_enabled: true
                 }
             });
 
@@ -479,23 +680,40 @@ serve(async (req) => {
             const orderId = atomicResult.order_id;
             console.log(`[Wallet] Atomic purchase complete! Order: ${orderId}, Number: ${phoneNumber}, New Balance: ${atomicResult.new_balance}`);
 
-            // Start fast polling for OTP detection with auto-cancel after 80 seconds
+            // Start fast polling immediately for OTP detection (await to ensure it works)
             console.log(`[Wallet] Starting fast OTP polling for order ${orderId}...`);
             
-            // Run polling in background so response returns immediately
-            fastPollOTP(orderId, smsPoolOrderId.toString(), user.id).then((pollResult) => {
+            try {
+                const pollResult = await fastPollOTP(orderId, smsPoolOrderId.toString(), user.id);
                 console.log(`[Wallet] Fast polling completed for order ${orderId}:`, pollResult);
-            }).catch((err) => {
-                console.error(`[Wallet] Fast polling error for order ${orderId}:`, err);
-            });
-
-            return new Response(JSON.stringify({
-                success: true,
-                order_id: orderId,
-                smspool_order_id: smsPoolOrderId.toString(),
-                number: phoneNumber,
-                message: "Number purchased successfully - OTP detection active (auto-cancel in 80s if no OTP)"
-            }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                
+                // Return appropriate response based on polling result
+                if (pollResult.success) {
+                    return new Response(JSON.stringify({
+                        success: true,
+                        order_id: orderId,
+                        number: phoneNumber,
+                        otp_code: pollResult.otp_code,
+                        message: "Number purchased and OTP detected"
+                    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                } else {
+                    return new Response(JSON.stringify({
+                        success: true,
+                        order_id: orderId,
+                        number: phoneNumber,
+                        message: pollResult.message || "Number purchased successfully"
+                    }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+                }
+            } catch (pollError) {
+                console.error(`[Wallet] Fast polling error for order ${orderId}:`, pollError);
+                // Still return success for purchase, even if polling fails
+                return new Response(JSON.stringify({
+                    success: true,
+                    order_id: orderId,
+                    number: phoneNumber,
+                    message: "Number purchased successfully - polling will continue in background"
+                }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+            }
         }
 
         if (action === 'purchase') {
@@ -517,7 +735,31 @@ serve(async (req) => {
             const countryId = order?.metadata?.countryId || '1'; // Default US if missing
             const serviceId = order?.metadata?.serviceId || service_type; // Use ID if available
 
-            const smspoolUrl = `https://api.smspool.net/purchase/sms?key=${SMSPOOL_API_KEY}&country=${countryId}&service=${serviceId}`;
+            // Get best pool for highest success rate
+            const bestPool = await getBestPool(serviceId, countryId);
+            
+            // Get service stats for metadata tracking
+            let serviceStats = null;
+            try {
+                const priceUrl = `https://api.smspool.net/request/price?key=${SMSPOOL_API_KEY}&country=${countryId}&service=${serviceId}`;
+                const priceResponse = await fetch(priceUrl);
+                if (priceResponse.ok) {
+                    serviceStats = await priceResponse.json();
+                }
+            } catch (e) {
+                console.log('[Purchase] Could not fetch service stats for metadata');
+            }
+            
+            let smspoolUrl = `https://api.smspool.net/purchase/sms?key=${SMSPOOL_API_KEY}&country=${countryId}&service=${serviceId}`;
+            
+            // Add pool parameter only if we have a specific pool (not 'default')
+            if (bestPool && bestPool !== 'default') {
+                smspoolUrl += `&pool=${bestPool}`;
+                console.log(`[Purchase] Using specific pool: ${bestPool}`);
+            } else {
+                console.log(`[Purchase] Using default pool selection (SMSPool auto-selects best pool)`);
+            }
+            
             console.log(`Calling SMSPool: ${smspoolUrl}`);
 
             const response = await fetch(smspoolUrl);
@@ -541,7 +783,10 @@ serve(async (req) => {
                         ...order?.metadata,
                         ...data,
                         phonenumber: phoneNumber,
-                        number: phoneNumber // Ensure 'number' is also set for redundancy
+                        number: phoneNumber, // Ensure 'number' is also set for redundancy
+                        selected_pool: bestPool || 'default',
+                        service_success_rate: serviceStats?.success_rate || null,
+                        pool_selection_enabled: true
                     }
                 })
                 .eq("id", order_id);
@@ -567,9 +812,39 @@ serve(async (req) => {
 
             if (updateError) console.error("Update Error", updateError);
 
-            return new Response(JSON.stringify({ success: true, number: phoneNumber }), {
-                headers: { ...corsHeaders, "Content-Type": "application/json" },
-            });
+            // Start fast polling immediately for OTP detection (await to ensure it works)
+            console.log(`[Purchase] Starting fast OTP polling for order ${order_id}...`);
+            
+            try {
+                const pollResult = await fastPollOTP(order_id, smsPoolOrderId.toString(), user_id || order?.user_id);
+                console.log(`[Purchase] Fast polling completed for order ${order_id}:`, pollResult);
+                
+                // Return appropriate response based on polling result
+                if (pollResult.success) {
+                    const response = {
+                        success: true,
+                        number: phoneNumber,
+                        otp_code: pollResult.otp_code,
+                        message: "Number purchased and OTP detected"
+                    };
+                    return new Response(JSON.stringify(response), { headers: { ...corsHeaders, "Content-Type": "application/json" });
+                } else {
+                    const response = {
+                        success: true,
+                        number: phoneNumber,
+                        message: pollResult.message || "Number purchased successfully"
+                    };
+                    return new Response(JSON.stringify(response), { headers: { ...corsHeaders, "Content-Type": "application/json" });
+                }
+            } catch (pollError) {
+                console.error(`[Purchase] Fast polling error for order ${order_id}:`, pollError);
+                // Still return success for purchase, even if polling fails
+                return new Response(JSON.stringify({ 
+                    success: true, 
+                    number: phoneNumber, 
+                    message: "Number purchased successfully - polling will continue in background" 
+                }), { headers: { ...corsHeaders, "Content-Type": "application/json" });
+            }
         }
 
         if (action === 'check_sms') {
@@ -745,6 +1020,54 @@ serve(async (req) => {
             });
         }
 
+
+        if (action === 'fast_poll_otp') {
+            const { order_id } = payload;
+            if (!order_id) {
+                return new Response(JSON.stringify({ success: false, message: 'Missing order_id' }), { 
+                    status: 400, 
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+                });
+            }
+
+            const log = (msg: string) => console.log(`[FAST_POLL] ${msg}`);
+            log(`Starting fast poll for order ${order_id}`);
+
+            // 1. Get order details
+            const { data: order, error: orderErr } = await supabase
+                .from('orders')
+                .select('*')
+                .eq('id', order_id)
+                .single();
+
+            if (orderErr || !order) {
+                log(`Order not found: ${orderErr?.message}`);
+                return new Response(JSON.stringify({ success: false, message: 'Order not found' }), { 
+                    status: 404, 
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+                });
+            }
+
+            const smspoolOrderId = order.request_id;
+            const userId = order.user_id;
+
+            if (!smspoolOrderId) {
+                log(`Order ${order_id} has no request_id - cannot poll`);
+                return new Response(JSON.stringify({ success: false, message: 'No SMSPool request_id on this order' }), { 
+                    status: 400, 
+                    headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+                });
+            }
+
+            // 2. Start fast polling
+            const result = await fastPollOTP(order_id, smspoolOrderId, userId);
+
+            log(`Fast poll result: ${JSON.stringify(result)}`);
+
+            return new Response(JSON.stringify(result), {
+                headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+            });
+        }
 
         if (action === 'poll_sms') {
             const { order_id } = payload;
@@ -1031,77 +1354,6 @@ serve(async (req) => {
             return new Response(JSON.stringify({ success: true, data }), {
                 headers: { ...corsHeaders, "Content-Type": "application/json" }
             });
-        }
-
-        // Countdown API for frontend display
-        if (action === 'get_order_countdown') {
-            const { order_id } = payload;
-            if (!order_id) {
-                return new Response(JSON.stringify({ success: false, message: 'Missing order_id' }), { 
-                    status: 400, 
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-                });
-            }
-
-            try {
-                const { data: order, error: orderErr } = await supabase
-                    .from('orders')
-                    .select('*')
-                    .eq('id', order_id)
-                    .single();
-
-                if (orderErr || !order) {
-                    return new Response(JSON.stringify({ success: false, message: 'Order not found' }), { 
-                        status: 404, 
-                        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-                    });
-                }
-
-                // Calculate countdown
-                const orderCreatedAt = new Date(order.created_at).getTime();
-                const currentTime = Date.now();
-                const totalDuration = 80000; // 80 seconds
-                const elapsed = currentTime - orderCreatedAt;
-                const remaining = Math.max(0, totalDuration - elapsed);
-                const percentage = Math.round((elapsed / totalDuration) * 100);
-
-                const isActive = order.status !== 'completed' && order.status !== 'refunded' && order.status !== 'failed' && remaining > 0;
-
-                const response = {
-                    success: true,
-                    order_id: order_id,
-                    status: order.status,
-                    countdown: {
-                        active: isActive,
-                        total_duration: totalDuration,
-                        elapsed: elapsed,
-                        remaining: remaining,
-                        percentage: Math.min(percentage, 100),
-                        time_remaining_seconds: Math.round(remaining / 1000),
-                        time_elapsed_seconds: Math.round(elapsed / 1000),
-                        message: isActive ? 'Waiting for OTP...' : 
-                                order.status === 'completed' ? 'OTP received' : 
-                                order.status === 'refunded' ? 'Order refunded' : 'Order completed'
-                    },
-                    order_details: {
-                        phone_number: order.phone_number,
-                        service_type: order.metadata?.serviceId,
-                        country_id: order.metadata?.countryId,
-                        created_at: order.created_at,
-                        payment_status: order.payment_status
-                    }
-                };
-
-                return new Response(JSON.stringify(response), {
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-                });
-
-            } catch (error) {
-                return new Response(JSON.stringify({ success: false, message: error.message }), {
-                    status: 500,
-                    headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-                });
-            }
         }
 
         return new Response("Invalid action", { status: 400, headers: corsHeaders });

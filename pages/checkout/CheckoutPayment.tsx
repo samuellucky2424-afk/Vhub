@@ -101,6 +101,35 @@ const CheckoutPayment: React.FC = () => {
 
             console.log('Purchase Successful:', data);
 
+            // Start countdown timer for auto-cancel (non-blocking, fire and forget)
+            (async () => {
+                try {
+                    console.log('[CheckoutPayment] Starting countdown for order:', data.order_id);
+                    // Use a short timeout since we don't need to wait for response
+                    const controller = new AbortController();
+                    setTimeout(() => controller.abort(), 5000); // 5 second max wait
+                    
+                    await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/countdown`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+                        },
+                        body: JSON.stringify({
+                            action: 'start_countdown',
+                            order_id: data.order_id,
+                            smspool_order_id: data.smspool_order_id || data.order_id,
+                            user_id: user.id
+                        }),
+                        signal: controller.signal
+                    });
+                    console.log('[CheckoutPayment] Countdown started successfully');
+                } catch (countdownErr) {
+                    // Timeout or error is ok - function still runs in background
+                    console.log('[CheckoutPayment] Countdown request sent (may be running in background)');
+                }
+            })(); // Immediately invoked, non-blocking
+
             // Refresh wallet to show new balance
             await fetchWallet();
 
