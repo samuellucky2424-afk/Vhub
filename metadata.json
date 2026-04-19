@@ -1,0 +1,5 @@
+{
+  "name": "VirtualNumberHub",
+  "description": "A comprehensive virtual number management platform allowing users to purchase, manage, and view SMS logs for international numbers.",
+  "requestFramePermissions": []
+}

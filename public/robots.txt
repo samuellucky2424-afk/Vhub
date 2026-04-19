@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+# Sitemap location
+Sitemap: https://www.luckyv-num.store/sitemap.xml
+
+# Crawl delay (optional - helps server stability)
+Crawl-delay: 1

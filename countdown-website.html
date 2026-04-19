@@ -1,0 +1,505 @@
+<!-- Countdown Timer Component for Website -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OTP Countdown Timer</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .countdown-container {
+            background: white;
+            border-radius: 20px;
+            padding: 30px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+
+        .countdown-header {
+            margin-bottom: 25px;
+        }
+
+        .countdown-header h2 {
+            color: #333;
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .countdown-header p {
+            color: #666;
+            margin: 10px 0 0 0;
+            font-size: 14px;
+        }
+
+        .countdown-display {
+            position: relative;
+            margin: 30px 0;
+        }
+
+        .countdown-circle {
+            width: 200px;
+            height: 200px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        .countdown-svg {
+            transform: rotate(-90deg);
+            width: 200px;
+            height: 200px;
+        }
+
+        .countdown-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .time-remaining {
+            font-size: 36px;
+            font-weight: bold;
+            color: #333;
+            margin: 0;
+        }
+
+        .time-label {
+            font-size: 12px;
+            color: #666;
+            margin: 5px 0 0 0;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 8px;
+            background: #f0f0f0;
+            border-radius: 4px;
+            margin: 20px 0;
+            overflow: hidden;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #45a049);
+            border-radius: 4px;
+            transition: width 1s ease-in-out;
+        }
+
+        .status-message {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+
+        .status-waiting {
+            background: #E3F2FD;
+            color: #1976D2;
+            border: 1px solid #BBDEFB;
+        }
+
+        .status-success {
+            background: #E8F5E8;
+            color: #2E7D32;
+            border: 1px solid #C8E6C9;
+        }
+
+        .status-refunded {
+            background: #FFF3E0;
+            color: #F57C00;
+            border: 1px solid #FFE0B2;
+        }
+
+        .status-failed {
+            background: #FFEBEE;
+            color: #D32F2F;
+            border: 1px solid #FFCDD2;
+        }
+
+        .order-details {
+            background: #f8f9fa;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+            text-align: left;
+        }
+
+        .detail-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .detail-value {
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .otp-code {
+            background: #E8F5E8;
+            border: 2px dashed #2E7D32;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: bold;
+            color: #2E7D32;
+            letter-spacing: 3px;
+        }
+
+        .refresh-btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            margin: 15px 5px;
+            transition: background 0.3s ease;
+        }
+
+        .refresh-btn:hover {
+            background: #5a67d8;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid #667eea;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+            margin-left: 8px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #FFEBEE;
+            color: #D32F2F;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border: 1px solid #FFCDD2;
+        }
+
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="countdown-container">
+        <div class="countdown-header">
+            <h2>OTP Verification</h2>
+            <p id="orderInfo">Loading order information...</p>
+        </div>
+
+        <div id="countdownDisplay" class="countdown-display">
+            <!-- Countdown Circle -->
+            <div class="countdown-circle">
+                <svg class="countdown-svg" viewBox="0 0 200 200">
+                    <circle cx="100" cy="100" r="90" fill="none" stroke="#f0f0f0" stroke-width="8"/>
+                    <circle id="progressCircle" cx="100" cy="100" r="90" fill="none" stroke="#4CAF50" stroke-width="8"
+                            stroke-dasharray="565.48" stroke-dashoffset="565.48" stroke-linecap="round"/>
+                </svg>
+                <div class="countdown-text">
+                    <div class="time-remaining" id="timeRemaining">--</div>
+                    <div class="time-label">SECONDS REMAINING</div>
+                </div>
+            </div>
+
+            <!-- Progress Bar -->
+            <div class="progress-bar">
+                <div id="progressFill" class="progress-fill" style="width: 0%"></div>
+            </div>
+
+            <!-- Status Message -->
+            <div id="statusMessage" class="status-message status-waiting">
+                Waiting for OTP...
+            </div>
+
+            <!-- OTP Code Display -->
+            <div id="otpDisplay" class="otp-code hidden">
+                <span id="otpCode"></span>
+            </div>
+        </div>
+
+        <!-- Order Details -->
+        <div id="orderDetails" class="order-details hidden">
+            <h3 style="margin-top: 0; color: #333;">Order Details</h3>
+            <div class="detail-row">
+                <span class="detail-label">Order ID:</span>
+                <span class="detail-value" id="detailOrderId">--</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Phone Number:</span>
+                <span class="detail-value" id="detailPhone">--</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Service:</span>
+                <span class="detail-value" id="detailService">--</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Country:</span>
+                <span class="detail-value" id="detailCountry">--</span>
+            </div>
+            <div class="detail-row">
+                <span class="detail-label">Created:</span>
+                <span class="detail-value" id="detailCreated">--</span>
+            </div>
+        </div>
+
+        <!-- Action Buttons -->
+        <div style="margin-top: 20px;">
+            <button class="refresh-btn" onclick="refreshCountdown()">
+                <span id="refreshText">Refresh</span>
+                <span id="loadingSpinner" class="loading hidden"></span>
+            </button>
+            <button class="refresh-btn" onclick="toggleDetails()">
+                View Details
+            </button>
+        </div>
+
+        <!-- Error Message -->
+        <div id="errorMessage" class="error-message hidden"></div>
+    </div>
+
+    <script>
+        let orderId = null;
+        let countdownInterval = null;
+        let currentCountdown = null;
+
+        // Get order ID from URL parameter or localStorage
+        function getOrderId() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const urlOrderId = urlParams.get('order_id');
+            const storedOrderId = localStorage.getItem('current_order_id');
+            
+            return urlOrderId || storedOrderId;
+        }
+
+        // Initialize countdown
+        async function initCountdown() {
+            orderId = getOrderId();
+            
+            if (!orderId) {
+                showError('No order ID found. Please provide an order ID in the URL: ?order_id=YOUR_ORDER_ID');
+                return;
+            }
+
+            localStorage.setItem('current_order_id', orderId);
+            
+            try {
+                await loadCountdown();
+                startCountdownTimer();
+            } catch (error) {
+                showError('Failed to load countdown: ' + error.message);
+            }
+        }
+
+        // Load countdown data from API
+        async function loadCountdown() {
+            showLoading(true);
+            
+            try {
+                const response = await fetch('/supabase/functions/v1/smspool-service', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer YOUR_SUPABASE_ANON_KEY' // Replace with actual key
+                    },
+                    body: JSON.stringify({
+                        action: 'get_order_countdown',
+                        order_id: orderId
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (data.success) {
+                    updateCountdownDisplay(data);
+                    updateOrderDetails(data);
+                } else {
+                    showError(data.message || 'Failed to load countdown data');
+                }
+            } catch (error) {
+                showError('Network error: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Update countdown display
+        function updateCountdownDisplay(data) {
+            currentCountdown = data;
+            
+            const countdown = data.countdown;
+            const timeRemaining = document.getElementById('timeRemaining');
+            const progressFill = document.getElementById('progressFill');
+            const statusMessage = document.getElementById('statusMessage');
+            const otpDisplay = document.getElementById('otpDisplay');
+            const otpCode = document.getElementById('otpCode');
+
+            if (countdown.active) {
+                // Active countdown
+                timeRemaining.textContent = countdown.time_remaining_seconds;
+                progressFill.style.width = countdown.percentage + '%';
+                
+                // Update progress circle
+                updateProgressCircle(countdown.percentage);
+                
+                statusMessage.className = 'status-message status-waiting';
+                statusMessage.textContent = countdown.message || 'Waiting for OTP...';
+                
+                // Change color based on time remaining
+                if (countdown.time_remaining_seconds <= 10) {
+                    progressFill.style.background = 'linear-gradient(90deg, #FF9800, #F57C00)';
+                    updateProgressCircle(countdown.percentage, '#FF9800');
+                } else if (countdown.time_remaining_seconds <= 30) {
+                    progressFill.style.background = 'linear-gradient(90deg, #FF9800, #F57C00)';
+                    updateProgressCircle(countdown.percentage, '#FF9800');
+                } else {
+                    progressFill.style.background = 'linear-gradient(90deg, #4CAF50, #45a049)';
+                    updateProgressCircle(countdown.percentage, '#4CAF50');
+                }
+                
+                otpDisplay.classList.add('hidden');
+            } else {
+                // Countdown completed
+                timeRemaining.textContent = '0';
+                progressFill.style.width = '100%';
+                updateProgressCircle(100, '#4CAF50');
+                
+                if (countdown.final_status === 'completed') {
+                    statusMessage.className = 'status-message status-success';
+                    statusMessage.textContent = countdown.message || 'OTP received!';
+                    
+                    // Show OTP code
+                    otpCode.textContent = countdown.otp_code || '------';
+                    otpDisplay.classList.remove('hidden');
+                } else if (countdown.final_status === 'refunded') {
+                    statusMessage.className = 'status-message status-refunded';
+                    statusMessage.textContent = countdown.message || 'Order refunded';
+                } else if (countdown.final_status === 'failed') {
+                    statusMessage.className = 'status-message status-failed';
+                    statusMessage.textContent = countdown.message || 'Order failed';
+                } else {
+                    statusMessage.className = 'status-message status-waiting';
+                    statusMessage.textContent = countdown.message || 'Order completed';
+                }
+                
+                otpDisplay.classList.add('hidden');
+            }
+        }
+
+        // Update progress circle
+        function updateProgressCircle(percentage, color = '#4CAF50') {
+            const progressCircle = document.getElementById('progressCircle');
+            const circumference = 2 * Math.PI * 90;
+            const offset = circumference - (percentage / 100) * circumference;
+            
+            progressCircle.style.strokeDashoffset = offset;
+            progressCircle.style.stroke = color;
+        }
+
+        // Update order details
+        function updateOrderDetails(data) {
+            const orderInfo = document.getElementById('orderInfo');
+            const details = document.getElementById('orderDetails');
+            
+            orderInfo.textContent = `Order #${data.order_id} - ${data.order_details.phone_number}`;
+            
+            document.getElementById('detailOrderId').textContent = data.order_id;
+            document.getElementById('detailPhone').textContent = data.order_details.phone_number;
+            document.getElementById('detailService').textContent = data.order_details.service_type;
+            document.getElementById('detailCountry').textContent = data.order_details.country_id;
+            document.getElementById('detailCreated').textContent = new Date(data.order_details.created_at).toLocaleString();
+        }
+
+        // Start local countdown timer
+        function startCountdownTimer() {
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+            }
+            
+            countdownInterval = setInterval(async () => {
+                if (currentCountdown && currentCountdown.countdown && currentCountdown.countdown.active) {
+                    // Refresh countdown data every 2 seconds
+                    await loadCountdown();
+                }
+            }, 2000);
+        }
+
+        // Refresh countdown
+        async function refreshCountdown() {
+            await loadCountdown();
+        }
+
+        // Toggle details visibility
+        function toggleDetails() {
+            const details = document.getElementById('orderDetails');
+            details.classList.toggle('hidden');
+        }
+
+        // Show loading state
+        function showLoading(show) {
+            const spinner = document.getElementById('loadingSpinner');
+            const text = document.getElementById('refreshText');
+            
+            if (show) {
+                spinner.classList.remove('hidden');
+                text.textContent = 'Loading...';
+            } else {
+                spinner.classList.add('hidden');
+                text.textContent = 'Refresh';
+            }
+        }
+
+        // Show error message
+        function showError(message) {
+            const errorElement = document.getElementById('errorMessage');
+            errorElement.textContent = message;
+            errorElement.classList.remove('hidden');
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', initCountdown);
+    </script>
+</body>
+</html>

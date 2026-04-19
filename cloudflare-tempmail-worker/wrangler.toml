@@ -1,0 +1,19 @@
+name = "vhub-tempmail-poller"
+main = "src/index.ts"
+compatibility_date = "2024-12-01"
+
+[durable_objects]
+bindings = [{ name = "TEMPMAIL_LOOP", class_name = "TempMailLoop" }]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TempMailLoop"]
+
+[vars]
+SUPABASE_URL = ""
+SUPABASE_ANON_KEY = ""
+SUPABASE_FUNCTION_NAME = "tempmail-gmail-poller"
+POLL_INTERVAL_MS = "5000"
+
+# Set this as a secret (do not commit):
+# wrangler secret put SUPABASE_CRON_SECRET
