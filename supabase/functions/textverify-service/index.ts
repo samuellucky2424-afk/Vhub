@@ -6,7 +6,8 @@ const TEXTVERIFIED_API_USERNAME = Deno.env.get("TEXTVERIFIED_API_USERNAME") || "
 const SMSPOOL_API_KEY = Deno.env.get("SMSPOOL_API_KEY") || "hL7noSdy86GcFPFn0xNuAIGrb8dNpkKk";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const ORDER_TIMEOUT_MS = Number(Deno.env.get("ORDER_TIMEOUT_MS") || "180000");
+const DEFAULT_ORDER_TIMEOUT_MS = 300000;
+const ORDER_TIMEOUT_MS = Number(Deno.env.get("ORDER_TIMEOUT_MS") || String(DEFAULT_ORDER_TIMEOUT_MS));
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: {
@@ -110,6 +111,221 @@ const toLogArray = (value: unknown): Array<Record<string, any>> => {
     return value.filter((item): item is Record<string, any> => !!item && typeof item === 'object');
 };
 
+function interpretSMSPoolCheck(checkData: any): {
+    status: 'pending' | 'completed' | 'refunded' | 'failed';
+    smsCode: string;
+    smsBody: string;
+} {
+    const numericStatus = Number(checkData?.status);
+    const smsCode = typeof checkData?.sms === 'string' ? checkData.sms.trim() : '';
+    const smsBody = typeof checkData?.full_sms === 'string' ? checkData.full_sms : smsCode;
+    const message = String(checkData?.message || '').toLowerCase();
+
+    if (smsCode || numericStatus === 3) {
+        return { status: 'completed', smsCode, smsBody };
+    }
+
+    if (numericStatus === 6 || numericStatus === 2 || message.includes('refunded')) {
+        return { status: 'refunded', smsCode: '', smsBody: '' };
+    }
+
+    if (numericStatus === 5 || message.includes('failed')) {
+        return { status: 'failed', smsCode: '', smsBody: '' };
+    }
+
+    return { status: 'pending', smsCode: '', smsBody: '' };
+}
+
+async function fetchSMSPoolCheck(orderId: string, requestId: string): Promise<any> {
+    const checkResp = await fetch(`https://api.smspool.net/sms/check?key=${SMSPOOL_API_KEY}&orderid=${requestId}`);
+    const checkText = await checkResp.text();
+    try {
+        return JSON.parse(checkText);
+    } catch {
+        console.error(`[sync] SMSPool /sms/check returned non-JSON for ${orderId}:`, checkText.slice(0, 200));
+        return {};
+    }
+}
+
+async function cancelSMSPoolOrder(requestId: string): Promise<{ success: boolean; message: string; raw: any }> {
+    try {
+        const cancelResp = await fetch(`https://api.smspool.net/sms/cancel?key=${SMSPOOL_API_KEY}&orderid=${requestId}`);
+        const cancelText = await cancelResp.text();
+        try {
+            const raw = JSON.parse(cancelText);
+            return {
+                success: !!raw?.success,
+                message: String(raw?.message || ''),
+                raw
+            };
+        } catch {
+            return { success: false, message: cancelText, raw: { rawText: cancelText } };
+        }
+    } catch (error: any) {
+        return { success: false, message: error.message, raw: { error: error.message } };
+    }
+}
+
+async function recoverMistakenRefund(order: any, smsCode: string, smsBody: string): Promise<void> {
+    const orderMetadata = toMetadataObject(order.metadata);
+    const baseMetadata = {
+        ...orderMetadata,
+        sms_code: smsCode,
+        smspool_status: 3,
+        status_fix_applied: true,
+        status_fix_reason: 'sms_delivered_after_local_refund',
+        status_fix_at: new Date().toISOString(),
+        status_fix_sms_recovered: !!smsCode
+    };
+
+    if (order.payment_status !== 'refunded') {
+        await supabase
+            .from('orders')
+            .update({
+                status: 'completed',
+                payment_status: 'completed',
+                sms_code: smsCode,
+                completed_at: new Date().toISOString(),
+                metadata: baseMetadata
+            })
+            .eq('id', order.id);
+        return;
+    }
+
+    const reversalReference = `SMSPOOL-DELIVERED-REVERSAL-${order.id}`;
+    const existingReversal = await supabase
+        .from('wallet_transactions')
+        .select('id')
+        .eq('reference', reversalReference)
+        .limit(1);
+
+    if (existingReversal.data && existingReversal.data.length > 0) {
+        await supabase
+            .from('orders')
+            .update({
+                status: 'completed',
+                payment_status: 'completed',
+                sms_code: smsCode,
+                completed_at: new Date().toISOString(),
+                metadata: {
+                    ...baseMetadata,
+                    financial_recovery_pending: false,
+                    refund_reversal_reference: reversalReference
+                }
+            })
+            .eq('id', order.id);
+        return;
+    }
+
+    const refundTx = await supabase
+        .from('wallet_transactions')
+        .select('amount_kobo')
+        .eq('type', 'refund')
+        .eq('reference', order.id)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+    const refundAmount = Math.abs(Number(refundTx.data?.[0]?.amount_kobo || 0));
+
+    if (!refundAmount) {
+        await supabase
+            .from('orders')
+            .update({
+                status: 'completed',
+                sms_code: smsCode,
+                completed_at: new Date().toISOString(),
+                metadata: {
+                    ...baseMetadata,
+                    financial_recovery_pending: true,
+                    financial_recovery_pending_reason: 'missing_refund_transaction'
+                }
+            })
+            .eq('id', order.id);
+        return;
+    }
+
+    const walletResult = await supabase
+        .from('wallets')
+        .select('balance_kobo')
+        .eq('user_id', order.user_id)
+        .single();
+
+    const walletBalance = Number(walletResult.data?.balance_kobo || 0);
+
+    if (walletResult.error || walletBalance < refundAmount) {
+        await supabase
+            .from('orders')
+            .update({
+                status: 'completed',
+                sms_code: smsCode,
+                completed_at: new Date().toISOString(),
+                metadata: {
+                    ...baseMetadata,
+                    financial_recovery_pending: true,
+                    financial_recovery_pending_amount_kobo: refundAmount,
+                    financial_recovery_pending_reason: walletResult.error ? walletResult.error.message : 'insufficient_balance'
+                }
+            })
+            .eq('id', order.id);
+        return;
+    }
+
+    const walletUpdate = await supabase
+        .from('wallets')
+        .update({
+            balance_kobo: walletBalance - refundAmount,
+            updated_at: new Date().toISOString()
+        })
+        .eq('user_id', order.user_id)
+        .eq('balance_kobo', walletBalance);
+
+    if (walletUpdate.error) {
+        await supabase
+            .from('orders')
+            .update({
+                status: 'completed',
+                sms_code: smsCode,
+                completed_at: new Date().toISOString(),
+                metadata: {
+                    ...baseMetadata,
+                    financial_recovery_pending: true,
+                    financial_recovery_pending_amount_kobo: refundAmount,
+                    financial_recovery_pending_reason: walletUpdate.error.message
+                }
+            })
+            .eq('id', order.id);
+        return;
+    }
+
+    const reversalInsert = await supabase
+        .from('wallet_transactions')
+        .insert({
+            user_id: order.user_id,
+            amount_kobo: -refundAmount,
+            currency: 'NGN',
+            type: 'debit',
+            reference: reversalReference,
+            status: 'completed'
+        });
+
+    await supabase
+        .from('orders')
+        .update({
+            status: 'completed',
+            payment_status: reversalInsert.error ? 'refunded' : 'completed',
+            sms_code: smsCode,
+            completed_at: new Date().toISOString(),
+            metadata: {
+                ...baseMetadata,
+                financial_recovery_pending: !!reversalInsert.error,
+                financial_recovery_pending_amount_kobo: reversalInsert.error ? refundAmount : 0,
+                financial_recovery_pending_reason: reversalInsert.error ? reversalInsert.error.message : null,
+                refund_reversal_reference: reversalReference
+            }
+        })
+        .eq('id', order.id);
+}
+
 async function requestOrderRefund(order: any, reason: string): Promise<{ success: boolean; message: string }> {
     const orderMetadata = toMetadataObject(order.metadata);
 
@@ -156,7 +372,7 @@ async function requestOrderRefund(order: any, reason: string): Promise<{ success
     };
 }
 
-const COUNTDOWN_DURATION = 120000;
+const COUNTDOWN_DURATION = ORDER_TIMEOUT_MS;
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -457,37 +673,48 @@ serve(async (req) => {
             let smsBody = '';
 
             if (provider === 'sms_pool') {
-                // Correct endpoint: /sms/check returns {status, sms, full_sms, time_left, expiration}
-                const checkResp = await fetch(`https://api.smspool.net/sms/check?key=${SMSPOOL_API_KEY}&orderid=${requestId}`);
-                const checkText = await checkResp.text();
-                let checkData: any = {};
-                try { checkData = JSON.parse(checkText); } catch { 
-                    console.error("[sync] SMSPool /sms/check returned non-JSON:", checkText.slice(0, 200));
-                }
-                // SMSPool states: 1 = pending, 2 = completed, 3 = expired/cancelled
-                const state = Number(checkData.status);
-                if (state === 2) {
-                    statusVal = 'completed';
-                    smsCode = checkData.sms || '';
-                    smsBody = checkData.full_sms || smsCode;
-                } else if (state === 3 || checkData.expired) {
-                    statusVal = 'failed';
-                } else {
-                    // Check if order has timed out (older than COUNTDOWN_DURATION)
+                const initialCheck = await fetchSMSPoolCheck(order_id, requestId);
+                const interpretedInitial = interpretSMSPoolCheck(initialCheck);
+
+                statusVal = interpretedInitial.status;
+                smsCode = interpretedInitial.smsCode;
+                smsBody = interpretedInitial.smsBody;
+
+                if (statusVal === 'pending') {
                     const orderAge = Date.now() - new Date(order.created_at).getTime();
+
                     if (orderAge > COUNTDOWN_DURATION) {
-                        console.log(`[sync] Order ${order_id} timed out (${Math.round(orderAge/1000)}s old). Cancelling on SMSPool...`);
-                        // Cancel on SMSPool to get their refund
-                        try {
-                            const cancelResp = await fetch(`https://api.smspool.net/sms/cancel?key=${SMSPOOL_API_KEY}&orderid=${requestId}`);
-                            const cancelText = await cancelResp.text();
-                            console.log(`[sync] SMSPool cancel response:`, cancelText);
-                        } catch (cancelErr: any) {
-                            console.error(`[sync] SMSPool cancel error:`, cancelErr.message);
+                        console.log(`[sync] Order ${order_id} timed out (${Math.round(orderAge / 1000)}s old). Cancelling on SMSPool...`);
+
+                        const cancelResult = await cancelSMSPoolOrder(requestId);
+                        console.log(`[sync] SMSPool cancel response for ${order_id}:`, cancelResult.raw);
+
+                        if (cancelResult.success) {
+                            const postCancelCheck = await fetchSMSPoolCheck(order_id, requestId);
+                            const interpretedPostCancel = interpretSMSPoolCheck(postCancelCheck);
+
+                            statusVal = interpretedPostCancel.status;
+                            smsCode = interpretedPostCancel.smsCode;
+                            smsBody = interpretedPostCancel.smsBody;
+
+                            if (statusVal === 'pending') {
+                                statusVal = 'refunded';
+                            }
+                        } else {
+                            await supabase
+                                .from('orders')
+                                .update({
+                                    metadata: {
+                                        ...orderMetadata,
+                                        cancel_attempt_failed: true,
+                                        cancel_attempt_failed_at: new Date().toISOString(),
+                                        cancel_attempt_error: cancelResult.message
+                                    }
+                                })
+                                .eq('id', order_id);
+
+                            statusVal = 'pending';
                         }
-                        statusVal = 'failed'; // This will trigger refund below
-                    } else {
-                        statusVal = 'pending';
                     }
                 }
             } else {
@@ -510,9 +737,9 @@ serve(async (req) => {
 
             if (statusVal === 'completed' && smsCode) {
                 const newMetadata = { ...orderMetadata, sms_code: smsCode, logs: [{ id: Date.now().toString(), message: smsBody, code: smsCode, receivedAt: new Date().toISOString() }, ...toLogArray(orderMetadata.logs)] };
-                await supabase.from('orders').update({ status: 'completed', payment_status: 'completed', sms_code: smsCode, metadata: newMetadata }).eq('id', order_id);
+                await recoverMistakenRefund({ ...order, metadata: newMetadata }, smsCode, smsBody);
                 await supabase.from('verifications').update({ otp_code: smsCode, full_sms: smsBody, received_at: new Date().toISOString() }).eq('order_id', order_id);
-            } else if (statusVal === 'failed') {
+            } else if (statusVal === 'failed' || statusVal === 'refunded') {
                 const refundAttempt = await requestOrderRefund(order, `${provider}_sync_failed_or_expired`);
                 if (!refundAttempt.success) {
                     console.warn(`[sync] Refund not completed for order ${order_id}: ${refundAttempt.message}`);

@@ -4,6 +4,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 const SMSPOOL_API_KEY = Deno.env.get("SMSPOOL_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ORDER_TIMEOUT_MS = Number(Deno.env.get("ORDER_TIMEOUT_MS") || "300000");
+const COUNTDOWN_POLL_INTERVAL_MS = Number(Deno.env.get("COUNTDOWN_POLL_INTERVAL_MS") || "2000");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: {
@@ -18,7 +20,7 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const COUNTDOWN_DURATION = 120000; // 120 seconds
+const COUNTDOWN_DURATION = ORDER_TIMEOUT_MS; // 5 minutes by default
 
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
@@ -56,7 +58,7 @@ serve(async (req) => {
             while (Date.now() - startTime < COUNTDOWN_DURATION + 10000) { // Add 10s buffer for the cancellation check 
                 const elapsed = Date.now() - startTime;
                 const remaining = Math.round((COUNTDOWN_DURATION - elapsed) / 1000);
-                const pollInterval = 5000; // Poll every 5 seconds
+                const pollInterval = COUNTDOWN_POLL_INTERVAL_MS; // Poll aggressively for fast OTP pickup
 
                 // Log at key intervals
                 if ([60, 30, 10, 5, 1].includes(Math.round(remaining / 5) * 5)) {
@@ -138,7 +140,7 @@ serve(async (req) => {
 
             const orderCreatedAt = new Date(order.created_at).getTime();
             const currentTime = Date.now();
-            const totalDuration = 120000;
+            const totalDuration = COUNTDOWN_DURATION;
             const elapsed = currentTime - orderCreatedAt;
             const remaining = Math.max(0, totalDuration - elapsed);
             const percentage = Math.min(Math.round((elapsed / totalDuration) * 100), 100);

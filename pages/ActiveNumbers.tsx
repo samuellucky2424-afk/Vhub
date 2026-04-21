@@ -106,8 +106,8 @@ const ActiveNumbers: React.FC = () => {
         // Run immediately on mount
         syncPendingOrders();
 
-        // Then run every 5 seconds for fast OTP detection
-        const interval = setInterval(syncPendingOrders, 5000);
+        // Then run every 2 seconds for faster OTP detection
+        const interval = setInterval(syncPendingOrders, 2000);
 
         // Realtime subscription for instant UI updates when DB changes
         const channel = supabase
@@ -145,7 +145,7 @@ const ActiveNumbers: React.FC = () => {
     }, [activeNumbers.length]); // Re-run if number count changes (e.g. new purchase)
 
     // Client-side countdown timer (no server calls needed)
-    const COUNTDOWN_DURATION_S = 120; // 120 seconds
+    const COUNTDOWN_DURATION_S = 300; // 5 minutes
 
     useEffect(() => {
         const updateCountdowns = () => {

@@ -5,8 +5,8 @@ const SMSPOOL_API_KEY = Deno.env.get("SMSPOOL_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
-const ORDER_TIMEOUT_MS = Number(Deno.env.get("ORDER_TIMEOUT_MS") || "180000"); // 3 minutes default
-const POLL_INTERVAL_MS = Number(Deno.env.get("POLL_INTERVAL_MS") || "5000"); // 5 seconds
+const ORDER_TIMEOUT_MS = Number(Deno.env.get("ORDER_TIMEOUT_MS") || "300000"); // 5 minutes default
+const POLL_INTERVAL_MS = Number(Deno.env.get("POLL_INTERVAL_MS") || "2000"); // 2 seconds
 const MAX_POLL_RETRIES = Number(Deno.env.get("MAX_POLL_RETRIES") || "3");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -32,6 +32,21 @@ interface SMSPoolResponse {
   sms?: string;
   full_sms?: string;
   message?: string;
+}
+
+function interpretSMSPoolStatus(result: {
+  status: number;
+  smsCode: string | null;
+  fullSms: string | null;
+  message: string | null;
+}): 'pending' | 'completed' | 'refunded' | 'failed' {
+  const message = String(result.message || '').toLowerCase();
+
+  if (result.smsCode || result.status === 3) return 'completed';
+  if (result.status === 6 || result.status === 2 || message.includes('refunded')) return 'refunded';
+  if (result.status === 5 || message.includes('failed')) return 'failed';
+
+  return 'pending';
 }
 
 async function checkSMSPoolStatus(smspoolOrderId: string): Promise<{
@@ -121,6 +136,124 @@ async function refundOrder(orderId: string, userId: string, amountKobo: number) 
   }
 }
 
+async function recoverMistakenRefund(order: any, smsCode: string, fullSms: string | null) {
+  if (order.payment_status !== 'refunded') {
+    await updateOrderStatus(order.id, 'completed', 3, null, smsCode, {
+      smspool_status: 3,
+      status_fix_applied: true,
+      status_fix_reason: 'sms_delivered_after_local_refund',
+      status_fix_at: new Date().toISOString(),
+    });
+    return;
+  }
+
+  const reversalReference = `SMSPOOL-DELIVERED-REVERSAL-${order.id}`;
+  const existingReversal = await supabase.from('wallet_transactions').select('id').eq('reference', reversalReference).limit(1);
+
+  if (existingReversal.data && existingReversal.data.length > 0) {
+    await supabase.from('orders').update({
+      status: 'completed',
+      payment_status: 'completed',
+      sms_code: smsCode,
+      completed_at: new Date().toISOString(),
+      metadata: {
+        ...(order.metadata || {}),
+        smspool_status: 3,
+        financial_recovery_pending: false,
+        refund_reversal_reference: reversalReference,
+        status_fix_applied: true,
+        status_fix_reason: 'sms_delivered_after_local_refund',
+        status_fix_at: new Date().toISOString(),
+      }
+    }).eq('id', order.id);
+    return;
+  }
+
+  const refundTx = await supabase.from('wallet_transactions').select('amount_kobo').eq('type', 'refund').eq('reference', order.id).order('created_at', { ascending: false }).limit(1);
+  const refundAmount = Math.abs(Number(refundTx.data?.[0]?.amount_kobo || 0));
+
+  const pendingMetadata = {
+    ...(order.metadata || {}),
+    smspool_status: 3,
+    financial_recovery_pending: true,
+    financial_recovery_pending_amount_kobo: refundAmount,
+    status_fix_applied: true,
+    status_fix_reason: 'sms_delivered_after_local_refund',
+    status_fix_at: new Date().toISOString(),
+  };
+
+  if (!refundAmount) {
+    await supabase.from('orders').update({
+      status: 'completed',
+      sms_code: smsCode,
+      completed_at: new Date().toISOString(),
+      metadata: {
+        ...pendingMetadata,
+        financial_recovery_pending_reason: 'missing_refund_transaction'
+      }
+    }).eq('id', order.id);
+    return;
+  }
+
+  const wallet = await supabase.from('wallets').select('balance_kobo').eq('user_id', order.user_id).single();
+  const walletBalance = Number(wallet.data?.balance_kobo || 0);
+
+  if (wallet.error || walletBalance < refundAmount) {
+    await supabase.from('orders').update({
+      status: 'completed',
+      sms_code: smsCode,
+      completed_at: new Date().toISOString(),
+      metadata: {
+        ...pendingMetadata,
+        financial_recovery_pending_reason: wallet.error ? wallet.error.message : 'insufficient_balance'
+      }
+    }).eq('id', order.id);
+    return;
+  }
+
+  const walletUpdate = await supabase.from('wallets').update({ balance_kobo: walletBalance - refundAmount, updated_at: new Date().toISOString() }).eq('user_id', order.user_id).eq('balance_kobo', walletBalance);
+
+  if (walletUpdate.error) {
+    await supabase.from('orders').update({
+      status: 'completed',
+      sms_code: smsCode,
+      completed_at: new Date().toISOString(),
+      metadata: {
+        ...pendingMetadata,
+        financial_recovery_pending_reason: walletUpdate.error.message,
+      }
+    }).eq('id', order.id);
+    return;
+  }
+
+  const reversalInsert = await supabase.from('wallet_transactions').insert({
+    user_id: order.user_id,
+    amount_kobo: -refundAmount,
+    currency: 'NGN',
+    type: 'debit',
+    reference: reversalReference,
+    status: 'completed'
+  });
+
+  await supabase.from('orders').update({
+    status: 'completed',
+    payment_status: reversalInsert.error ? 'refunded' : 'completed',
+    sms_code: smsCode,
+    completed_at: new Date().toISOString(),
+    metadata: {
+      ...(order.metadata || {}),
+      smspool_status: 3,
+      financial_recovery_pending: !!reversalInsert.error,
+      financial_recovery_pending_amount_kobo: reversalInsert.error ? refundAmount : 0,
+      financial_recovery_pending_reason: reversalInsert.error ? reversalInsert.error.message : null,
+      refund_reversal_reference: reversalReference,
+      status_fix_applied: true,
+      status_fix_reason: 'sms_delivered_after_local_refund',
+      status_fix_at: new Date().toISOString(),
+    }
+  }).eq('id', order.id);
+}
+
 async function cancelSMSPoolOrder(smspoolOrderId: string): Promise<boolean> {
   try {
     const url = `https://api.smspool.net/sms/cancel?key=${SMSPOOL_API_KEY}&orderid=${smspoolOrderId}`;
@@ -142,8 +275,10 @@ async function processOrder(order: any): Promise<void> {
     const result = await checkSMSPoolStatus(smspoolOrderId);
     const { status: smspoolStatus, smsCode, fullSms, message } = result;
 
-    switch (smspoolStatus) {
-      case 1:
+    const interpretedStatus = interpretSMSPoolStatus(result);
+
+    switch (interpretedStatus) {
+      case 'pending':
         if (status === 'processing') {
           await updateOrderStatus(orderId, 'number_received', smspoolStatus, message, null, { phone_number: order.phone_number });
         } else if (status === 'number_received') {
@@ -151,9 +286,9 @@ async function processOrder(order: any): Promise<void> {
         }
         break;
 
-      case 3:
+      case 'completed':
         if (smsCode) {
-          await updateOrderStatus(orderId, 'completed', smspoolStatus, message, smsCode);
+          await recoverMistakenRefund(order, smsCode, fullSms);
           await supabase.from('verifications').upsert({
             order_id: orderId,
             user_id: userId,
@@ -165,20 +300,19 @@ async function processOrder(order: any): Promise<void> {
         }
         break;
 
-      case 2:
-      case 6:
+      case 'refunded':
         await updateOrderStatus(orderId, 'refunded', smspoolStatus, message, null, { refund_reason: 'smspool_cancelled' });
         if (priceKobo && priceKobo > 0) {
           await refundOrder(orderId, userId, priceKobo);
         }
         break;
 
-      case 5:
+      case 'failed':
         await updateOrderStatus(orderId, 'failed', smspoolStatus, message, null, { failure_reason: 'smspool_failed' });
         break;
 
       default:
-        log(`Unknown SMSPool status`, { orderId, smspoolStatus });
+        log(`Unknown SMSPool status`, { orderId, smspoolStatus, interpretedStatus });
     }
   } catch (error) {
     log(`Error processing order`, { orderId, error: error.message });
@@ -208,8 +342,30 @@ async function processTimedOutOrders(): Promise<number> {
   for (const order of timedOutOrders) {
     const { id: orderId, request_id: smspoolOrderId, user_id: userId, price_kobo: priceKobo } = order;
 
-    await cancelSMSPoolOrder(smspoolOrderId);
-    await updateOrderStatus(orderId, 'refunded', null, 'Order timed out', null, { timeout_refund: true });
+    const cancelSucceeded = await cancelSMSPoolOrder(smspoolOrderId);
+    if (!cancelSucceeded) {
+      await supabase.from('orders').update({
+        metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({
+          timeout_cancel_failed: true,
+          timeout_cancel_failed_at: new Date().toISOString(),
+        })}`)
+      }).eq('id', orderId);
+      continue;
+    }
+
+    const providerState = interpretSMSPoolStatus(await checkSMSPoolStatus(smspoolOrderId));
+    if (providerState !== 'refunded') {
+      await supabase.from('orders').update({
+        metadata: supabase.raw(`COALESCE(metadata, '{}'::jsonb) || ${JSON.stringify({
+          timeout_cancel_pending_confirmation: true,
+          timeout_cancel_pending_confirmation_at: new Date().toISOString(),
+          provider_state_after_cancel: providerState,
+        })}`)
+      }).eq('id', orderId);
+      continue;
+    }
+
+    await updateOrderStatus(orderId, 'refunded', 6, 'Order timed out and provider refund confirmed', null, { timeout_refund: true });
 
     if (priceKobo && priceKobo > 0) {
       await refundOrder(orderId, userId, priceKobo);
@@ -217,6 +373,42 @@ async function processTimedOutOrders(): Promise<number> {
   }
 
   return timedOutOrders.length;
+}
+
+async function recoverPendingFinancialReversals(): Promise<number> {
+  const { data: orders, error } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('status', 'completed')
+    .eq('payment_status', 'refunded')
+    .limit(20);
+
+  if (error || !orders?.length) {
+    return 0;
+  }
+
+  let recoveredCount = 0;
+
+  for (const order of orders) {
+    const metadata = order.metadata || {};
+    if (!metadata.financial_recovery_pending || !order.sms_code) {
+      continue;
+    }
+
+    await recoverMistakenRefund(order, order.sms_code, null);
+
+    const { data: updatedOrder } = await supabase
+      .from('orders')
+      .select('payment_status, metadata')
+      .eq('id', order.id)
+      .single();
+
+    if (updatedOrder?.payment_status === 'completed' && !updatedOrder?.metadata?.financial_recovery_pending) {
+      recoveredCount++;
+    }
+  }
+
+  return recoveredCount;
 }
 
 async function pollActiveOrders(): Promise<{ processed: number; completed: number; failed: number; refunded: number }> {
@@ -258,8 +450,9 @@ serve(async (req) => {
 
     if (action === 'poll') {
       const result = await pollActiveOrders();
-      log(`Poll complete`, result);
-      return new Response(JSON.stringify({ success: true, ...result }), {
+      const recovered = await recoverPendingFinancialReversals();
+      log(`Poll complete`, { ...result, recovered });
+      return new Response(JSON.stringify({ success: true, ...result, recovered }), {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       });
     }
