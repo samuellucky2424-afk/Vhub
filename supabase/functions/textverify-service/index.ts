@@ -110,6 +110,52 @@ const toLogArray = (value: unknown): Array<Record<string, any>> => {
     return value.filter((item): item is Record<string, any> => !!item && typeof item === 'object');
 };
 
+async function requestOrderRefund(order: any, reason: string): Promise<{ success: boolean; message: string }> {
+    const orderMetadata = toMetadataObject(order.metadata);
+
+    // Mark lifecycle as refunded first so DB trigger paths and RPC eligibility checks can run.
+    await supabase
+        .from('orders')
+        .update({
+            status: 'refunded',
+            metadata: {
+                ...orderMetadata,
+                auto_refund_requested: true,
+                auto_refund_reason: reason,
+                auto_refund_requested_at: new Date().toISOString()
+            }
+        })
+        .eq('id', order.id);
+
+    const { data: refundResult, error: refundError } = await supabase.rpc('process_order_refund', {
+        p_order_id: order.id
+    });
+
+    if (refundError) {
+        console.error(`[sync] process_order_refund failed for order ${order.id}:`, refundError.message);
+
+        await supabase
+            .from('orders')
+            .update({
+                metadata: {
+                    ...orderMetadata,
+                    auto_refund_requested: true,
+                    auto_refund_reason: reason,
+                    auto_refund_requested_at: new Date().toISOString(),
+                    auto_refund_error: refundError.message
+                }
+            })
+            .eq('id', order.id);
+
+        return { success: false, message: refundError.message };
+    }
+
+    return {
+        success: !!refundResult?.success,
+        message: refundResult?.message || 'Refund RPC executed'
+    };
+}
+
 const COUNTDOWN_DURATION = 120000;
 
 serve(async (req) => {
@@ -467,7 +513,11 @@ serve(async (req) => {
                 await supabase.from('orders').update({ status: 'completed', payment_status: 'completed', sms_code: smsCode, metadata: newMetadata }).eq('id', order_id);
                 await supabase.from('verifications').update({ otp_code: smsCode, full_sms: smsBody, received_at: new Date().toISOString() }).eq('order_id', order_id);
             } else if (statusVal === 'failed') {
-                await supabase.from('orders').update({ status: 'refunded' }).eq('id', order_id);
+                const refundAttempt = await requestOrderRefund(order, `${provider}_sync_failed_or_expired`);
+                if (!refundAttempt.success) {
+                    console.warn(`[sync] Refund not completed for order ${order_id}: ${refundAttempt.message}`);
+                }
+                statusVal = 'refunded';
             }
 
             return new Response(JSON.stringify({ success: true, order_id, new_status: statusVal, sms: smsCode || null }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
