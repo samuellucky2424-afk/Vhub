@@ -3,15 +3,18 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
 import { motion } from 'framer-motion';
+import { extractFlutterwaveRedirectParams, isFlutterwavePaymentSuccessful } from '../lib/payments/flutterwave.js';
 
 const WalletSuccessPage: React.FC = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const { fetchWallet } = useApp();
-    const [status, setStatus] = useState<'loading' | 'success' | 'timeout'>('loading');
-    const reference = searchParams.get('reference') || searchParams.get('trxref');
+    const [status, setStatus] = useState<'loading' | 'success' | 'timeout' | 'cancelled'>('loading');
+    const redirectParams = extractFlutterwaveRedirectParams(searchParams.toString());
+    const reference = redirectParams.tx_ref;
+    const transactionId = redirectParams.transaction_id;
+    const gatewayStatus = redirectParams.status;
 
-    const [userCheckAttempts, setUserCheckAttempts] = useState(0);
     const { user, loading: authLoading } = useApp();
 
     useEffect(() => {
@@ -26,13 +29,49 @@ const WalletSuccessPage: React.FC = () => {
             return;
         }
 
+        if (gatewayStatus && !isFlutterwavePaymentSuccessful(gatewayStatus) && gatewayStatus.toLowerCase() !== 'completed') {
+            setStatus('cancelled');
+            return;
+        }
+
         console.log('WalletSuccess: Auth loaded, user:', user ? 'authenticated' : 'not authenticated');
 
         let transactionAttempts = 0;
         const maxAttempts = 20; // 30 seconds approx
 
+        const verifyTransaction = async () => {
+            if (!user || !transactionId) {
+                return;
+            }
+
+            try {
+                const {
+                    data: { session },
+                } = await supabase.auth.getSession();
+
+                if (!session?.access_token) {
+                    return;
+                }
+
+                await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/verify-wallet-funding`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        Authorization: `Bearer ${session.access_token}`,
+                        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+                    },
+                    body: JSON.stringify({
+                        tx_ref: reference,
+                        transaction_id: transactionId,
+                    }),
+                });
+            } catch (error) {
+                console.log('WalletSuccess: verify-wallet-funding still pending', error);
+            }
+        };
+
         const checkTransaction = async () => {
-            const { data, error } = await supabase
+            const { data } = await supabase
                 .from('wallet_transactions')
                 .select('id, amount')
                 .eq('reference', reference)
@@ -52,15 +91,18 @@ const WalletSuccessPage: React.FC = () => {
                 if (transactionAttempts >= maxAttempts) {
                     setStatus('timeout');
                 } else {
+                    if (transactionAttempts === 1 || transactionAttempts % 3 === 0) {
+                        await verifyTransaction();
+                    }
                     setTimeout(checkTransaction, 1500);
                 }
             }
         };
 
-        checkTransaction();
+        verifyTransaction().finally(checkTransaction);
 
         return () => { };
-    }, [reference, navigate, fetchWallet, user, authLoading]); // Added authLoading dependency
+    }, [reference, transactionId, gatewayStatus, navigate, fetchWallet, user, authLoading]);
 
 
     return (
@@ -90,6 +132,22 @@ const WalletSuccessPage: React.FC = () => {
                         <p className="text-slate-500 dark:text-zinc-400">Your wallet has been funded.</p>
                         <p className="text-xs text-slate-400 mt-2">Redirecting to dashboard...</p>
                     </motion.div>
+                )}
+
+                {status === 'cancelled' && (
+                    <div className="flex flex-col items-center gap-4">
+                        <div className="size-16 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 flex items-center justify-center">
+                            <span className="material-symbols-outlined text-3xl">close</span>
+                        </div>
+                        <h2 className="text-xl font-bold">Payment Not Completed</h2>
+                        <p className="text-slate-500 dark:text-zinc-400">Flutterwave reported that this transaction was cancelled or not completed.</p>
+                        <button
+                            onClick={() => navigate('/dashboard')}
+                            className="mt-4 px-6 py-2 bg-primary text-white rounded-lg font-bold"
+                        >
+                            Back to Dashboard
+                        </button>
+                    </div>
                 )}
 
                 {status === 'timeout' && (

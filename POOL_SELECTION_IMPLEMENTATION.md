@@ -17,7 +17,7 @@ Implement intelligent pool selection to improve OTP success rates by choosing SM
 
 #### 2. **Integration Points**
 - **Purchase Wallet Flow** (lines 280-368): Added pool selection before SMSPool API call
-- **Purchase Flow** (lines 435-487): Added pool selection for Paystack webhook flow
+- **Purchase Flow** (lines 435-487): Added pool selection for the payment webhook flow
 - **Both flows**: Enhanced metadata tracking with success rate and pool selection info
 
 #### 3. **New API Action**

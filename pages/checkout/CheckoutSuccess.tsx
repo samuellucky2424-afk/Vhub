@@ -34,7 +34,7 @@ const CheckoutSuccess: React.FC = () => {
 
         const fetchOrder = async () => {
             try {
-                // Try fetching by id first (wallet purchases), then by payment_reference (Paystack)
+                // Try fetching by id first (wallet purchases), then by payment_reference for historical gateway records
                 let order = null;
                 let fetchError = null;
 

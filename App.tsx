@@ -19,6 +19,7 @@ import CheckoutSuccess from './pages/checkout/CheckoutSuccess';
 import SupportPage from './pages/SupportPage';
 import TempEmailPage from './pages/TempEmailPage';
 import Profile from './pages/Profile';
+import WalletSuccessPage from './src/pages/WalletSuccessPage';
 
 // Footer Pages
 import PricingPage from './pages/PricingPage';
@@ -108,6 +109,7 @@ const AppContent: React.FC = () => {
             <Route path="/checkout/summary" element={<CheckoutSummary />} />
             <Route path="/checkout/payment" element={<CheckoutPayment />} />
             <Route path="/checkout/success" element={<CheckoutSuccess />} />
+            <Route path="/wallet/success" element={<WalletSuccessPage />} />
             <Route path="/emails" element={<TempEmailPage />} />
             <Route path="/support" element={<SupportPage />} />
             <Route path="/profile" element={<Profile />} />

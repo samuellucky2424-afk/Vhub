@@ -55,7 +55,7 @@ async function fastPollOTP(orderId: string, smspoolOrderId: string, userId: stri
 
 #### Integration Points
 - **Purchase Wallet Flow**: Starts fast polling after successful purchase
-- **Purchase Flow**: Starts fast polling after Paystack webhook
+- **Purchase Flow**: Starts fast polling after the payment webhook confirms funding
 - **New API Action**: `fast_poll_otp` for manual polling
 
 #### Auto-Refund System

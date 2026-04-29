@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useApp } from '../App';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '../src/lib/supabase';
-import PaystackFunding from '../src/components/PaystackFunding';
+import FlutterwaveFunding from '../src/components/FlutterwaveFunding';
 import { ServiceLogo } from '../src/utils/serviceIcons';
 import { formatNaira } from '../src/utils/formatCurrency';
 
@@ -194,7 +194,7 @@ const Dashboard: React.FC = () => {
                 >
                   <span className="material-symbols-outlined text-sm">close</span>
                 </button>
-                <PaystackFunding />
+                <FlutterwaveFunding />
               </div>
             </motion.div>
           </>

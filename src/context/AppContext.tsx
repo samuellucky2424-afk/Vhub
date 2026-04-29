@@ -167,11 +167,43 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
         let walletChannel: any = null;
         let retryCount = 0;
         const maxRetries = 3;
+        let retryTimeoutId: number | null = null;
+        let fallbackPollId: number | null = null;
+
+        const clearRetryTimeout = () => {
+            if (retryTimeoutId !== null) {
+                window.clearTimeout(retryTimeoutId);
+                retryTimeoutId = null;
+            }
+        };
+
+        const stopFallbackPolling = () => {
+            if (fallbackPollId !== null) {
+                window.clearInterval(fallbackPollId);
+                fallbackPollId = null;
+            }
+        };
+
+        const refreshWalletFallback = () => {
+            if (!mounted || !user?.id) return;
+            fetchWallet();
+        };
+
+        const startFallbackPolling = () => {
+            if (fallbackPollId !== null) return;
+
+            console.warn('App: Wallet realtime unavailable, falling back to periodic refresh');
+            refreshWalletFallback();
+            fallbackPollId = window.setInterval(refreshWalletFallback, 15000);
+        };
 
         if (user?.id) {
             console.log('App: Setting up wallet subscription for user', user.id);
+            window.addEventListener('focus', refreshWalletFallback);
 
             const createSubscription = () => {
+                clearRetryTimeout();
+
                 // Clean up any existing subscription first
                 if (walletChannel) {
                     supabase.removeChannel(walletChannel);
@@ -212,14 +244,18 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
 
                         if (status === 'SUBSCRIBED') {
                             retryCount = 0; // Reset retry count on success
+                            stopFallbackPolling();
                         } else if (status === 'TIMED_OUT' || status === 'CLOSED') {
                             if (retryCount < maxRetries) {
                                 retryCount++;
                                 console.log(`App: Retrying wallet subscription (${retryCount}/${maxRetries})`);
-                                setTimeout(createSubscription, 2000 * retryCount); // Exponential backoff
+                                retryTimeoutId = window.setTimeout(createSubscription, 2000 * retryCount); // Exponential backoff
                             } else {
-                                console.error('App: Wallet subscription failed after max retries');
+                                console.warn('App: Wallet subscription failed after max retries');
+                                startFallbackPolling();
                             }
+                        } else if (status === 'CHANNEL_ERROR') {
+                            console.warn('App: Wallet realtime channel error, waiting for reconnect path');
                         }
                     });
             };
@@ -229,6 +265,9 @@ export const AppProvider: React.FC<AppProviderProps> = ({ children }) => {
 
         return () => {
             mounted = false;
+            clearRetryTimeout();
+            stopFallbackPolling();
+            window.removeEventListener('focus', refreshWalletFallback);
             if (walletChannel) {
                 console.log('App: Cleaning up wallet subscription');
                 supabase.removeChannel(walletChannel);

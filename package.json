@@ -12,13 +12,11 @@
     "@capacitor/android": "^8.1.0",
     "@capacitor/cli": "^7.5.0",
     "@capacitor/core": "^8.1.0",
-    "@paystack/inline-js": "^2.22.2",
     "@supabase/supabase-js": "^2.39.0",
     "framer-motion": "10.18.0",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "react-helmet-async": "^2.0.5",
-    "react-paystack": "^6.0.0",
     "react-router-dom": "6.22.3"
   },
   "devDependencies": {
