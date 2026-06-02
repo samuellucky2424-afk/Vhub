@@ -145,7 +145,18 @@ serve(async (req: Request) => {
       wallUrl.searchParams.set("secure_hash", md5(`${user.id}-${CPX_SECURE_HASH}`));
     }
 
-    return new Response(JSON.stringify({ url: wallUrl.toString() }), {
+    const username = user.user_metadata?.full_name || user.email?.split("@")[0] || "V-Number User";
+
+    return new Response(JSON.stringify({
+      url: wallUrl.toString(),
+      widget_config: {
+        appId: Number(CPX_APP_ID),
+        extUserId: user.id,
+        email: user.email || "",
+        username,
+        url: wallUrl.toString(),
+      },
+    }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (error) {

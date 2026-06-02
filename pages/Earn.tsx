@@ -6,6 +6,13 @@ import { formatNaira } from '../src/utils/formatCurrency';
 type EarnWallState = {
   loading: boolean;
   url: string;
+  widgetConfig: {
+    appId: number;
+    extUserId: string;
+    email: string;
+    username: string;
+    url: string;
+  } | null;
   error: string | null;
 };
 
@@ -14,6 +21,7 @@ const Earn: React.FC = () => {
   const [wallState, setWallState] = useState<EarnWallState>({
     loading: true,
     url: '',
+    widgetConfig: null,
     error: null,
   });
 
@@ -46,6 +54,7 @@ const Earn: React.FC = () => {
       setWallState({
         loading: false,
         url: parsedResponse.url,
+        widgetConfig: parsedResponse.widget_config || null,
         error: null,
       });
     } catch (error) {
@@ -53,6 +62,7 @@ const Earn: React.FC = () => {
       setWallState({
         loading: false,
         url: '',
+        widgetConfig: null,
         error: error instanceof Error ? error.message : 'Survey wall is not available right now.',
       });
     }
@@ -62,8 +72,67 @@ const Earn: React.FC = () => {
     loadSurveyWall();
   }, [loadSurveyWall]);
 
+  useEffect(() => {
+    if (!wallState.widgetConfig) return undefined;
+
+    const existingScript = document.getElementById('survey-notification-script');
+    existingScript?.remove();
+
+    const notificationContainer = document.getElementById('notification');
+    if (notificationContainer) {
+      notificationContainer.innerHTML = '';
+    }
+
+    const { appId, extUserId, email, username, url } = wallState.widgetConfig;
+
+    (window as any).config = {
+      general_config: {
+        app_id: appId,
+        ext_user_id: extUserId,
+        email,
+        username,
+        subid_1: '',
+        subid_2: '',
+      },
+      style_config: {
+        text_color: '#2b2b2b',
+        survey_box: {
+          topbar_background_color: '#f59e0b',
+          box_background_color: 'white',
+          rounded_borders: false,
+          stars_filled: '#2b2b2b',
+        },
+      },
+      script_config: [
+        {
+          div_id: 'notification',
+          theme_style: 4,
+          position: 5,
+          text: '',
+          link: url,
+          newtab: true,
+        },
+      ],
+      debug: false,
+    };
+
+    const script = document.createElement('script');
+    script.id = 'survey-notification-script';
+    script.src = 'https://cdn.cpx-research.com/assets/js/script_tag_v1.1.js';
+    script.async = true;
+    document.body.appendChild(script);
+
+    return () => {
+      script.remove();
+      if (notificationContainer) {
+        notificationContainer.innerHTML = '';
+      }
+    };
+  }, [wallState.widgetConfig]);
+
   return (
     <div className="flex-1 flex flex-col h-full overflow-y-auto bg-background-light dark:bg-background-dark">
+      <div id="notification" />
       <header className="sticky top-0 z-10 shrink-0 border-b border-gray-200 dark:border-white/10 bg-white dark:bg-background-dark px-4 sm:px-6 py-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
