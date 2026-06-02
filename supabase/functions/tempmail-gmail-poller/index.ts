@@ -3,6 +3,8 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
+const TEMPMAIL_CRON_SECRET = Deno.env.get("TEMPMAIL_CRON_SECRET") || "";
 
 const GMAIL_CLIENT_ID = Deno.env.get("GMAIL_CLIENT_ID")!;
 const GMAIL_CLIENT_SECRET = Deno.env.get("GMAIL_CLIENT_SECRET")!;
@@ -15,7 +17,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
 };
 
 function jsonResponse(body: object, status = 200) {
@@ -23,6 +25,25 @@ function jsonResponse(body: object, status = 200) {
     status,
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
+}
+
+async function isAuthorizedRequest(req: Request): Promise<boolean> {
+  const cronSecret = req.headers.get("X-CRON-SECRET") || req.headers.get("x-cron-secret") || "";
+  if (TEMPMAIL_CRON_SECRET && cronSecret === TEMPMAIL_CRON_SECRET) {
+    return true;
+  }
+
+  const authHeader = req.headers.get("Authorization") || "";
+  const token = authHeader.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || "";
+  if (token === SUPABASE_SERVICE_ROLE_KEY) {
+    return true;
+  }
+  if (!token || token === SUPABASE_ANON_KEY) {
+    return false;
+  }
+
+  const { data: { user }, error } = await supabase.auth.getUser(token);
+  return !error && !!user;
 }
 
 // ─── Gmail OAuth ───
@@ -372,11 +393,7 @@ async function expireOldEmails() {
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
-  // Allow both cron secret and authenticated users
-  const authHeader = req.headers.get("Authorization");
-  const cronSecret = req.headers.get("X-CRON-SECRET");
-
-  if (!cronSecret && !authHeader) {
+  if (!(await isAuthorizedRequest(req))) {
     return jsonResponse({ success: false, message: "Unauthorized" }, 401);
   }
 

@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 const SMSPOOL_API_KEY = Deno.env.get("SMSPOOL_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ORDER_WORKER_SECRET = Deno.env.get("ORDER_WORKER_SECRET") || "";
 
 const ORDER_TIMEOUT_MS = Number(Deno.env.get("ORDER_TIMEOUT_MS") || "300000"); // 5 minutes default
 const POLL_INTERVAL_MS = Number(Deno.env.get("POLL_INTERVAL_MS") || "2000"); // 2 seconds
@@ -15,7 +16,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-worker-secret, x-cron-secret',
 };
 
 const log = (msg: string, data?: any) => {
@@ -23,6 +24,14 @@ const log = (msg: string, data?: any) => {
   const logEntry = `[${timestamp}] [WORKER] ${msg}${data ? ' ' + JSON.stringify(data) : ''}`;
   console.log(logEntry);
 };
+
+function isAuthorizedWorkerRequest(req: Request): boolean {
+  const authHeader = req.headers.get('Authorization') || '';
+  const bearer = authHeader.match(/^Bearer\s+(.+)$/i)?.[1]?.trim() || '';
+  const workerSecret = req.headers.get('x-worker-secret') || req.headers.get('x-cron-secret') || '';
+
+  return bearer === SUPABASE_SERVICE_ROLE_KEY || (!!ORDER_WORKER_SECRET && workerSecret === ORDER_WORKER_SECRET);
+}
 
 interface SMSPoolResponse {
   success?: number;
@@ -440,6 +449,13 @@ async function pollActiveOrders(): Promise<{ processed: number; completed: numbe
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
+  }
+
+  if (!isAuthorizedWorkerRequest(req)) {
+    return new Response(JSON.stringify({ success: false, message: 'Not found' }), {
+      status: ORDER_WORKER_SECRET ? 403 : 404,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
   }
 
   try {

@@ -4,6 +4,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 const SMSPOOL_API_KEY = Deno.env.get("SMSPOOL_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const ORDER_TIMEOUT_MS = Number(Deno.env.get("ORDER_TIMEOUT_MS") || "300000");
 const COUNTDOWN_POLL_INTERVAL_MS = Number(Deno.env.get("COUNTDOWN_POLL_INTERVAL_MS") || "2000");
 
@@ -22,6 +23,54 @@ const corsHeaders = {
 
 const COUNTDOWN_DURATION = ORDER_TIMEOUT_MS; // 5 minutes by default
 
+function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+    });
+}
+
+function bearerToken(req: Request): string | null {
+    const authHeader = req.headers.get('Authorization') || '';
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    return match?.[1]?.trim() || null;
+}
+
+async function authenticateRequester(req: Request, payload: any): Promise<
+    | { ok: true; isInternal: true; user: null }
+    | { ok: true; isInternal: false; user: any }
+    | { ok: false; response: Response }
+> {
+    const headerToken = bearerToken(req);
+
+    if (headerToken && headerToken === SUPABASE_SERVICE_ROLE_KEY) {
+        return { ok: true, isInternal: true, user: null };
+    }
+
+    const bodyToken = typeof payload?.user_token === 'string' ? payload.user_token.trim() : '';
+    const token = bodyToken && bodyToken !== SUPABASE_ANON_KEY
+        ? bodyToken
+        : headerToken && headerToken !== SUPABASE_ANON_KEY
+            ? headerToken
+            : '';
+
+    if (!token) {
+        return { ok: false, response: jsonResponse({ success: false, message: 'Authentication required' }, 401) };
+    }
+
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+        console.error('[Countdown] Auth failed:', error?.message);
+        return { ok: false, response: jsonResponse({ success: false, message: 'Authentication failed. Please log in again.' }, 401) };
+    }
+
+    return { ok: true, isInternal: false, user };
+}
+
+function canAccessOrder(order: any, auth: { isInternal: boolean; user: any | null }): boolean {
+    return auth.isInternal || (!!auth.user?.id && order?.user_id === auth.user.id);
+}
+
 serve(async (req) => {
     if (req.method === 'OPTIONS') {
         return new Response('ok', { headers: corsHeaders });
@@ -33,19 +82,33 @@ serve(async (req) => {
 
     try {
         const payload = await req.json();
-        const { action, order_id, smspool_order_id, user_id } = payload;
+        const { action, order_id, smspool_order_id } = payload;
 
         console.log(`[Countdown] Received: ${action}`, payload);
 
         if (action === 'start_countdown') {
-            if (!order_id || !smspool_order_id || !user_id) {
+            if (!order_id || !smspool_order_id) {
                 return new Response(JSON.stringify({
                     success: false,
-                    message: 'Missing order_id, smspool_order_id, or user_id'
+                    message: 'Missing order_id or smspool_order_id'
                 }), {
                     status: 400,
                     headers: { ...corsHeaders, 'Content-Type': 'application/json' }
                 });
+            }
+
+            const auth = await authenticateRequester(req, payload);
+            if (!auth.ok) return auth.response;
+
+            const { data: order, error } = await supabase.from('orders').select('*').eq('id', order_id).single();
+            if (error || !order) {
+                return jsonResponse({ success: false, message: 'Order not found' }, 404);
+            }
+            if (!canAccessOrder(order, auth)) {
+                return jsonResponse({ success: false, message: 'Forbidden' }, 403);
+            }
+            if (order.request_id && String(order.request_id) !== String(smspool_order_id)) {
+                return jsonResponse({ success: false, message: 'Order reference mismatch' }, 403);
             }
 
             // Start countdown and polling in background
@@ -129,6 +192,9 @@ serve(async (req) => {
                 });
             }
 
+            const auth = await authenticateRequester(req, payload);
+            if (!auth.ok) return auth.response;
+
             const { data: order, error } = await supabase.from('orders').select('*').eq('id', order_id).single();
 
             if (error || !order) {
@@ -136,6 +202,9 @@ serve(async (req) => {
                     status: 404,
                     headers: { ...corsHeaders, 'Content-Type': 'application/json' }
                 });
+            }
+            if (!canAccessOrder(order, auth)) {
+                return jsonResponse({ success: false, message: 'Forbidden' }, 403);
             }
 
             const orderCreatedAt = new Date(order.created_at).getTime();

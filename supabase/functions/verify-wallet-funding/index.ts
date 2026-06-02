@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import {
     getFlutterwaveErrorMessage,
     isFlutterwavePaymentSuccessful,
+    MINIMUM_WALLET_FUNDING_NGN,
 } from "../../../src/lib/payments/flutterwave.js";
 
 const FLUTTERWAVE_SECRET_KEY = Deno.env.get("FLUTTERWAVE_SECRET_KEY")!;
@@ -71,9 +72,18 @@ serve(async (req: Request) => {
         const verifiedTransaction = await verifyTransaction(String(transaction_id));
         const verifiedTxRef = String(verifiedTransaction.tx_ref || "");
         const verifiedUserId = String(verifiedTransaction.meta?.user_id || "");
+        const verifiedCurrency = String(verifiedTransaction.currency || "").toUpperCase();
+        const verifiedAmount = Number(verifiedTransaction.amount || 0);
 
         if (verifiedUserId && verifiedUserId !== user.id) {
             return new Response(JSON.stringify({ error: "Transaction does not belong to the authenticated user." }), {
+                status: 403,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+        }
+
+        if (!verifiedTxRef.startsWith(`fund_${user.id}_`)) {
+            return new Response(JSON.stringify({ error: "Transaction is not a wallet funding payment." }), {
                 status: 403,
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
             });
@@ -98,7 +108,14 @@ serve(async (req: Request) => {
             });
         }
 
-        const amountKobo = Math.round(Number(verifiedTransaction.amount || 0) * 100);
+        if (verifiedCurrency !== "NGN" || !Number.isFinite(verifiedAmount) || verifiedAmount < MINIMUM_WALLET_FUNDING_NGN) {
+            return new Response(JSON.stringify({ error: "Invalid wallet funding amount or currency." }), {
+                status: 400,
+                headers: { ...corsHeaders, "Content-Type": "application/json" },
+            });
+        }
+
+        const amountKobo = Math.round(verifiedAmount * 100);
         const { error: creditError } = await supabase.rpc("credit_wallet", {
             p_user_id: user.id,
             p_amount: amountKobo,

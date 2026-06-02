@@ -15,6 +15,13 @@ const ActiveNumbers: React.FC = () => {
     const isAutoSyncingRef = useRef(false);
 
     const syncOrderStatus = async (orderId: string) => {
+        const { data: { session } } = await supabase.auth.getSession();
+        const userToken = session?.access_token;
+
+        if (!userToken) {
+            throw new Error('User not authenticated');
+        }
+
         const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/textverify-service`, {
             method: 'POST',
             headers: {
@@ -22,7 +29,7 @@ const ActiveNumbers: React.FC = () => {
                 'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
                 'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY,
             },
-            body: JSON.stringify({ action: 'sync_order_status', order_id: orderId })
+            body: JSON.stringify({ action: 'sync_order_status', order_id: orderId, user_token: userToken })
         });
 
         const rawText = await response.text();

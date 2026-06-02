@@ -85,6 +85,9 @@ const CheckoutPayment: React.FC = () => {
             // Get current session for token
             const { data: { session } } = await supabase.auth.getSession();
             const userToken = session?.access_token;
+            if (!userToken) {
+                throw new Error('User not authenticated');
+            }
 
             const response = await fetch(`${import.meta.env.VITE_SUPABASE_URL}/functions/v1/textverify-service`, {
                 method: 'POST',
@@ -139,7 +142,7 @@ const CheckoutPayment: React.FC = () => {
                             action: 'start_countdown',
                             order_id: data.order_id,
                             smspool_order_id: data.smspool_order_id || data.order_id,
-                            user_id: user.id
+                            user_token: userToken
                         })
                     });
 

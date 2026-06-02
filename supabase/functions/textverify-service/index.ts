@@ -1,11 +1,12 @@
 import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
-const TEXTVERIFIED_API_KEY = Deno.env.get("TEXTVERIFIED_API_KEY") || "4mf4LGpBdnckP9rLhqAjdBP4pZr9ojthJh9F1mJ4PeCnBvl3UXiH3iRYXNO6n1";
-const TEXTVERIFIED_API_USERNAME = Deno.env.get("TEXTVERIFIED_API_USERNAME") || "samuellucky2424@gmail.com";
-const SMSPOOL_API_KEY = Deno.env.get("SMSPOOL_API_KEY") || "hL7noSdy86GcFPFn0xNuAIGrb8dNpkKk";
+const TEXTVERIFIED_API_KEY = Deno.env.get("TEXTVERIFIED_API_KEY")!;
+const TEXTVERIFIED_API_USERNAME = Deno.env.get("TEXTVERIFIED_API_USERNAME")!;
+const SMSPOOL_API_KEY = Deno.env.get("SMSPOOL_API_KEY")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") || "";
 const DEFAULT_ORDER_TIMEOUT_MS = 300000;
 const ORDER_TIMEOUT_MS = Number(Deno.env.get("ORDER_TIMEOUT_MS") || String(DEFAULT_ORDER_TIMEOUT_MS));
 
@@ -23,6 +24,54 @@ const corsHeaders = {
     'Access-Control-Allow-Headers': 'Authorization, Content-Type, Accept, apikey, x-client-info',
     'Access-Control-Max-Age': '86400',
 };
+
+function jsonResponse(body: Record<string, unknown>, status = 200): Response {
+    return new Response(JSON.stringify(body), {
+        status,
+        headers: { ...corsHeaders, "Content-Type": "application/json" }
+    });
+}
+
+function bearerToken(req: Request): string | null {
+    const authHeader = req.headers.get('Authorization') || '';
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    return match?.[1]?.trim() || null;
+}
+
+async function authenticateRequester(req: Request, payload: any): Promise<
+    | { ok: true; isInternal: true; user: null }
+    | { ok: true; isInternal: false; user: any }
+    | { ok: false; response: Response }
+> {
+    const headerToken = bearerToken(req);
+
+    if (headerToken && headerToken === SUPABASE_SERVICE_ROLE_KEY) {
+        return { ok: true, isInternal: true, user: null };
+    }
+
+    const bodyToken = typeof payload?.user_token === 'string' ? payload.user_token.trim() : '';
+    const token = bodyToken && bodyToken !== SUPABASE_ANON_KEY
+        ? bodyToken
+        : headerToken && headerToken !== SUPABASE_ANON_KEY
+            ? headerToken
+            : '';
+
+    if (!token) {
+        return { ok: false, response: jsonResponse({ success: false, message: "Authentication required" }, 401) };
+    }
+
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) {
+        console.error("Auth Error:", error);
+        return { ok: false, response: jsonResponse({ success: false, message: "Authentication failed. Please log in again." }, 401) };
+    }
+
+    return { ok: true, isInternal: false, user };
+}
+
+function canAccessOrder(order: any, auth: { isInternal: boolean; user: any | null }): boolean {
+    return auth.isInternal || (!!auth.user?.id && order?.user_id === auth.user.id);
+}
 
 // ─── TextVerified Auth Helper ───
 let tvBearerTokenCache: { token: string; expiresAt: number } | null = null;
@@ -557,22 +606,10 @@ serve(async (req) => {
 
         // ─── ACTION: purchase_wallet ───
         if (action === 'purchase_wallet') {
-            const authHeader = req.headers.get('Authorization');
-            const headerToken = authHeader ? authHeader.replace('Bearer ', '') : null;
-            
-            // Check if header is just the anon key
-            const isAnonKey = headerToken === Deno.env.get("SUPABASE_ANON_KEY");
-            
-            const token = (payload.user_token && !isAnonKey) ? payload.user_token : (headerToken || payload.user_token || null);
-            
-            if (!token) return new Response(JSON.stringify({ success: false, message: "Missing token" }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-
-            const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-            if (authError || !user) {
-                console.error("Auth Error:", authError);
-                return new Response(JSON.stringify({ success: false, message: "Authentication failed. Please log in again." }), { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-            }
-
+            const auth = await authenticateRequester(req, payload);
+            if (!auth.ok) return auth.response;
+            if (auth.isInternal) return jsonResponse({ success: false, message: "User authentication required" }, 401);
+            const user = auth.user;
             const { service_type, country, service_id, country_id } = payload;
             
             // 1. Calculate Price
@@ -661,8 +698,14 @@ serve(async (req) => {
         // ─── ACTION: sync_order_status ───
         if (action === 'sync_order_status' || action === 'check_sms' || action === 'poll_sms' || action === 'check_order') {
             const { order_id } = payload;
+            if (!order_id) return jsonResponse({ success: false, message: 'Missing order_id' }, 400);
+
+            const auth = await authenticateRequester(req, payload);
+            if (!auth.ok) return auth.response;
+
             const { data: order } = await supabase.from('orders').select('*').eq('id', order_id).single();
             if (!order) return new Response(JSON.stringify({ success: false, message: 'Order not found' }), { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+            if (!canAccessOrder(order, auth)) return jsonResponse({ success: false, message: 'Forbidden' }, 403);
 
             const orderMetadata = toMetadataObject(order.metadata);
             const provider = orderMetadata.provider || 'text_verify';
@@ -753,7 +796,15 @@ serve(async (req) => {
         // ─── ACTION: get_order_countdown ───
         if (action === 'get_order_countdown') {
             const { order_id } = payload;
+            if (!order_id) return jsonResponse({ success: false, message: 'Missing order_id' }, 400);
+
+            const auth = await authenticateRequester(req, payload);
+            if (!auth.ok) return auth.response;
+
             const { data: order } = await supabase.from('orders').select('*').eq('id', order_id).single();
+            if (!order) return jsonResponse({ success: false, message: 'Order not found' }, 404);
+            if (!canAccessOrder(order, auth)) return jsonResponse({ success: false, message: 'Forbidden' }, 403);
+
             const elapsed = Date.now() - new Date(order.created_at).getTime();
             const remaining = Math.max(0, COUNTDOWN_DURATION - elapsed);
             return new Response(JSON.stringify({ success: true, order_id, status: order.status, countdown: { active: remaining > 0, remaining, percentage: Math.min(Math.round((elapsed / COUNTDOWN_DURATION) * 100), 100) } }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });

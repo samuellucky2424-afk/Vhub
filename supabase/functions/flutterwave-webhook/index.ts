@@ -3,6 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import {
     getFlutterwaveErrorMessage,
     isFlutterwavePaymentSuccessful,
+    MINIMUM_WALLET_FUNDING_NGN,
 } from "../../../src/lib/payments/flutterwave.js";
 
 const FLUTTERWAVE_SECRET_KEY = Deno.env.get("FLUTTERWAVE_SECRET_KEY");
@@ -111,8 +112,14 @@ serve(async (req: Request) => {
         }
 
         const verifiedTransaction = await verifyTransaction(transactionId);
+        const verifiedTxRef = String(verifiedTransaction.tx_ref || "");
         if (!isFlutterwavePaymentSuccessful(verifiedTransaction.status)) {
             console.log(`[flutterwave-webhook] Ignoring non-successful transaction ${txRef}: ${verifiedTransaction.status}`);
+            return new Response("OK", { status: 200 });
+        }
+
+        if (verifiedTxRef !== txRef) {
+            console.error("[flutterwave-webhook] Transaction reference mismatch.", { txRef, verifiedTxRef });
             return new Response("OK", { status: 200 });
         }
 
@@ -122,9 +129,19 @@ serve(async (req: Request) => {
             return new Response("OK", { status: 200 });
         }
 
-        const amountKobo = Math.round(Number(verifiedTransaction.amount || 0) * 100);
-        if (!Number.isFinite(amountKobo) || amountKobo <= 0) {
-            console.error("[flutterwave-webhook] Invalid transaction amount.", verifiedTransaction.amount);
+        if (!verifiedTxRef.startsWith(`fund_${userId}_`)) {
+            console.error("[flutterwave-webhook] Ignoring non-wallet-funding reference.", verifiedTxRef);
+            return new Response("OK", { status: 200 });
+        }
+
+        const verifiedCurrency = String(verifiedTransaction.currency || "").toUpperCase();
+        const verifiedAmount = Number(verifiedTransaction.amount || 0);
+        const amountKobo = Math.round(verifiedAmount * 100);
+        if (verifiedCurrency !== "NGN" || !Number.isFinite(verifiedAmount) || verifiedAmount < MINIMUM_WALLET_FUNDING_NGN) {
+            console.error("[flutterwave-webhook] Invalid transaction amount or currency.", {
+                amount: verifiedTransaction.amount,
+                currency: verifiedTransaction.currency,
+            });
             return new Response("OK", { status: 200 });
         }
 
@@ -135,7 +152,7 @@ serve(async (req: Request) => {
         const { error: creditError } = await supabase.rpc("credit_wallet", {
             p_user_id: userId,
             p_amount: amountKobo,
-            p_reference: txRef,
+            p_reference: verifiedTxRef,
             p_metadata: {
                 gateway: "flutterwave",
                 transaction_id: verifiedTransaction.id,

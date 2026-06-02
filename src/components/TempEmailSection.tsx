@@ -233,38 +233,16 @@ export const TempEmailSection: React.FC = () => {
             );
 
             if (activeEmail) {
-                // 2. Mark as expired in DB
-                await supabase
-                    .from('temp_emails')
-                    .update({ status: 'expired' })
-                    .eq('id', activeEmail.id);
-
-                // 3. Directly refund via credit_wallet RPC
-                const refRef = `REFUND-TMP-AUTO-${activeEmail.id}`;
-                const { error: rpcError } = await supabase.rpc('credit_wallet', {
-                    p_user_id: user.id,
-                    p_amount: 130000, // TEMPMAIL_PRICE_KOBO
-                    p_reference: refRef,
-                    p_metadata: { source: 'tempmail_refund_auto', email: activeEmail.email_address }
-                });
-
-                if (rpcError) {
-                    console.error('[TempEmail] Refund RPC failed:', rpcError);
-                } else {
-                    console.log(`[TempEmail] Refunded ${activeEmail.email_address} successfully`);
-                }
+                await triggerPoller();
             }
 
-            // 4. Refresh UI
-            await fetchEmails();
             await fetchWallet();
         } catch (err) {
             console.error('[TempEmail] handleExpired error:', err);
-            // Still refresh in case of partial success
             fetchEmails();
             fetchWallet();
         }
-    }, [user?.id, emails, fetchEmails, fetchWallet]);
+    }, [user?.id, emails, triggerPoller, fetchEmails, fetchWallet]);
 
     // ─── Buy Email ───
     const handleBuyEmail = async () => {
