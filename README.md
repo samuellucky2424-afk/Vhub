@@ -17,7 +17,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1dr3X28DAuoIKCMLiGxTFsA
    `npm install`
 2. Copy `.env.example` to `.env` and fill in your Supabase, provider, and Flutterwave credentials.
 3. Configure Flutterwave:
-   - Set `FLUTTERWAVE_PUBLIC_KEY`, `FLUTTERWAVE_SECRET_KEY`, and `FLUTTERWAVE_WEBHOOK_SECRET_HASH`
+   - Set `FLUTTERWAVE_SECRET_KEY` and `FLUTTERWAVE_WEBHOOK_SECRET_HASH`
    - Set `FLUTTERWAVE_REDIRECT_URL` to your deployed wallet callback route, for example `https://your-app.example/#/wallet/success`
    - Point your Flutterwave dashboard webhook to `/functions/v1/flutterwave-webhook`
 4. Run the app:
@@ -33,6 +33,7 @@ View your app in AI Studio: https://ai.studio/apps/drive/1dr3X28DAuoIKCMLiGxTFsA
 ## Verification Flow
 
 - Frontend initializes a hosted checkout session through `initialize-wallet-funding`.
+- The Flutterwave public key is not needed in the browser; the Edge Function creates hosted checkout sessions with the server-side secret key.
 - Flutterwave redirects back to `/#/wallet/success` with `tx_ref`, `transaction_id`, and `status`.
 - The success page polls `wallet_transactions` and calls `verify-wallet-funding` if webhook settlement is delayed.
 - The `flutterwave-webhook` function validates the `flutterwave-signature` header using your webhook secret hash, re-verifies the transaction, and credits the wallet idempotently.

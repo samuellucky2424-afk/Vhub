@@ -2,6 +2,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 import {
     FLUTTERWAVE_PAYMENT_METHODS,
+    MINIMUM_WALLET_FUNDING_NGN,
     buildFlutterwaveFundingPayload,
     getFlutterwaveErrorMessage,
 } from "../../../src/lib/payments/flutterwave.js";
@@ -61,9 +62,10 @@ serve(async (req) => {
             amount,
             payment_method = FLUTTERWAVE_PAYMENT_METHODS.auto,
         } = await req.json();
+        const parsedAmount = Number(amount);
 
-        if (!amount || Number(amount) < 100) {
-            return new Response(JSON.stringify({ error: "Invalid amount. Minimum is 100 NGN." }), {
+        if (!Number.isFinite(parsedAmount) || parsedAmount < MINIMUM_WALLET_FUNDING_NGN) {
+            return new Response(JSON.stringify({ error: `Invalid amount. Minimum is ${MINIMUM_WALLET_FUNDING_NGN} NGN.` }), {
                 status: 400,
                 headers: { ...corsHeaders, "Content-Type": "application/json" },
             });
@@ -78,7 +80,7 @@ serve(async (req) => {
                 "Content-Type": "application/json",
             },
             body: JSON.stringify(buildFlutterwaveFundingPayload({
-                amount: Number(amount),
+                amount: parsedAmount,
                 redirectUrl,
                 paymentMethod: payment_method,
                 reference,

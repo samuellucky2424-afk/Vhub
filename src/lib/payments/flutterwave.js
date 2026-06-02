@@ -10,6 +10,8 @@ export const FLUTTERWAVE_PAYMENT_METHODS = {
     mobile_money: 'mobile_money',
 };
 
+export const MINIMUM_WALLET_FUNDING_NGN = 4500;
+
 const MOBILE_MONEY_OPTIONS = [
     'mobilemoneyghana',
     'mobilemoneyfranco',

@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase';
 import { useApp } from '../context/AppContext';
 import {
     FLUTTERWAVE_PAYMENT_METHODS,
+    MINIMUM_WALLET_FUNDING_NGN,
     getFlutterwaveErrorMessage,
 } from '../lib/payments/flutterwave.js';
 
@@ -11,19 +12,15 @@ const FlutterwaveFunding: React.FC = () => {
     const [amount, setAmount] = useState<number | ''>('');
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-
-    const publicKey = import.meta.env.VITE_FLUTTERWAVE_PUBLIC_KEY || '';
+    const minimumDepositLabel = `\u20A6${MINIMUM_WALLET_FUNDING_NGN.toLocaleString('en-NG')}`;
+    const isBelowMinimum = !amount || Number(amount) < MINIMUM_WALLET_FUNDING_NGN;
+    const isSubmitDisabled = loading || isBelowMinimum || !user;
 
     const handleFundWallet = async () => {
         const amountNGN = Number(amount) || 0;
 
-        if (amountNGN < 2000) {
-            setMessage({ type: 'error', text: 'Minimum deposit is ₦2,000' });
-            return;
-        }
-
-        if (!publicKey) {
-            setMessage({ type: 'error', text: 'Flutterwave public key is missing.' });
+        if (amountNGN < MINIMUM_WALLET_FUNDING_NGN) {
+            setMessage({ type: 'error', text: `Minimum deposit is ${minimumDepositLabel}` });
             return;
         }
 
@@ -91,13 +88,13 @@ const FlutterwaveFunding: React.FC = () => {
                         <input
                             type="number"
                             className="w-full pl-8 pr-4 py-3 bg-slate-50 dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/50 font-bold"
-                            placeholder="2000"
+                            placeholder={String(MINIMUM_WALLET_FUNDING_NGN)}
                             value={amount}
                             onChange={(e) => setAmount(e.target.value ? Number(e.target.value) : '')}
-                            min={2000}
+                            min={MINIMUM_WALLET_FUNDING_NGN}
                         />
                     </div>
-                    <p className="text-xs text-slate-500 mt-1">Minimum ₦2,000</p>
+                    <p className="text-xs text-slate-500 mt-1">Minimum {minimumDepositLabel}</p>
                 </div>
 
                 {message && (
@@ -115,8 +112,8 @@ const FlutterwaveFunding: React.FC = () => {
                 <div className="w-full">
                     <button
                         onClick={handleFundWallet}
-                        disabled={loading || !amount || Number(amount) < 2000 || !user}
-                        className={`w-full font-bold py-3 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${loading || !amount || Number(amount) < 2000 || !user
+                        disabled={isSubmitDisabled}
+                        className={`w-full font-bold py-3 px-6 rounded-xl transition-all shadow-lg flex items-center justify-center gap-2 ${isSubmitDisabled
                             ? 'bg-slate-200 dark:bg-zinc-800 text-slate-400 cursor-not-allowed shadow-none'
                             : 'bg-primary hover:bg-primary/90 text-white active:scale-95'}`}
                     >
