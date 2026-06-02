@@ -12,7 +12,7 @@ import SignUpPage from './pages/SignUpPage';
 import ResetPassword from './pages/ResetPassword';
 import Dashboard from './pages/Dashboard';
 import ActiveNumbers from './pages/ActiveNumbers';
-import Store from './pages/Store';
+import Earn from './pages/Earn';
 import CheckoutSummary from './pages/checkout/CheckoutSummary';
 import CheckoutPayment from './pages/checkout/CheckoutPayment';
 import CheckoutSuccess from './pages/checkout/CheckoutSuccess';
@@ -103,7 +103,8 @@ const AppContent: React.FC = () => {
           }>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/numbers" element={<ActiveNumbers />} />
-            <Route path="/store" element={<Store />} />
+            <Route path="/earn" element={<Earn />} />
+            <Route path="/store" element={<Navigate to="/earn" replace />} />
 
             {/* Checkout Flow */}
             <Route path="/checkout/summary" element={<CheckoutSummary />} />

@@ -6,6 +6,7 @@ import { supabase } from '../src/lib/supabase';
 import FlutterwaveFunding from '../src/components/FlutterwaveFunding';
 import { ServiceLogo } from '../src/utils/serviceIcons';
 import { formatNaira } from '../src/utils/formatCurrency';
+import WalletTransactionHistory from '../src/components/WalletTransactionHistory';
 
 
 const Dashboard: React.FC = () => {
@@ -167,6 +168,10 @@ const Dashboard: React.FC = () => {
               </div>
             </div>
           </div>
+        </motion.div>
+
+        <motion.div variants={item}>
+          <WalletTransactionHistory />
         </motion.div>
       </motion.div>
 

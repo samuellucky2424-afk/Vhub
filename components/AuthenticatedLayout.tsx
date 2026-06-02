@@ -12,7 +12,7 @@ const AuthenticatedLayout: React.FC = () => {
     { path: '/dashboard', icon: 'dashboard', label: 'Dashboard' },
     { path: '/checkout/summary', icon: 'add_shopping_cart', label: 'Buy Numbers' },
     { path: '/numbers', icon: 'tag', label: 'My Numbers', fill: 1 },
-    { path: '/store', icon: 'storefront', label: 'Store' },
+    { path: '/earn', icon: 'paid', label: 'Earn' },
     { path: '/emails', icon: 'forward_to_inbox', label: 'Buy Email' },
   ];
 
@@ -20,6 +20,7 @@ const AuthenticatedLayout: React.FC = () => {
     { path: '/dashboard', icon: 'home', label: 'Home' },
     { path: '/checkout/summary', icon: 'add_shopping_cart', label: 'Buy Number' },
     { path: '/numbers', icon: 'tag', label: 'My Numbers', fill: 1 },
+    { path: '/earn', icon: 'paid', label: 'Earn' },
     { path: '/emails', icon: 'forward_to_inbox', label: 'Buy Email' },
     { path: '/profile', icon: 'person', label: 'Profile' },
   ];
@@ -90,7 +91,7 @@ const AuthenticatedLayout: React.FC = () => {
             key={item.path}
             to={item.path}
             className={({ isActive }) => `
-                flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg min-w-[56px] transition-colors
+                flex flex-col items-center gap-0.5 px-1.5 py-1.5 rounded-lg min-w-[52px] transition-colors
                 ${isActive
                 ? 'text-primary'
                 : 'text-slate-400 dark:text-zinc-500'}
