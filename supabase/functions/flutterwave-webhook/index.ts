@@ -10,6 +10,20 @@ const FLUTTERWAVE_WEBHOOK_SECRET_HASH = Deno.env.get("FLUTTERWAVE_WEBHOOK_SECRET
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("MY_SERVICE_ROLE_KEY");
 
+function toHex(bytes: Uint8Array) {
+    return Array.from(bytes)
+        .map((byte) => byte.toString(16).padStart(2, "0"))
+        .join("");
+}
+
+function toBase64(bytes: Uint8Array) {
+    let binary = "";
+    bytes.forEach((byte) => {
+        binary += String.fromCharCode(byte);
+    });
+    return btoa(binary);
+}
+
 async function signPayload(payload: string) {
     const encoder = new TextEncoder();
     const key = await crypto.subtle.importKey(
@@ -21,9 +35,11 @@ async function signPayload(payload: string) {
     );
 
     const signature = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
-    return Array.from(new Uint8Array(signature))
-        .map((byte) => byte.toString(16).padStart(2, "0"))
-        .join("");
+    const bytes = new Uint8Array(signature);
+    return {
+        base64: toBase64(bytes),
+        hex: toHex(bytes),
+    };
 }
 
 async function verifyWebhookSignature(body: string, providedSignature: string) {
@@ -31,8 +47,14 @@ async function verifyWebhookSignature(body: string, providedSignature: string) {
         return false;
     }
 
+    if (providedSignature === FLUTTERWAVE_WEBHOOK_SECRET_HASH) {
+        return true;
+    }
+
     const expectedSignature = await signPayload(body);
-    return expectedSignature.toLowerCase() === providedSignature.toLowerCase();
+    return [expectedSignature.base64, expectedSignature.hex].some(
+        (signature) => signature.toLowerCase() === providedSignature.toLowerCase(),
+    );
 }
 
 async function verifyTransaction(transactionId: string) {
@@ -63,7 +85,7 @@ serve(async (req: Request) => {
             return new Response("OK", { status: 200 });
         }
 
-        const signature = req.headers.get("flutterwave-signature") || "";
+        const signature = req.headers.get("flutterwave-signature") || req.headers.get("verif-hash") || "";
         const body = await req.text();
         const isVerified = await verifyWebhookSignature(body, signature);
 

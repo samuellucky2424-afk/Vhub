@@ -71,13 +71,15 @@ const WalletSuccessPage: React.FC = () => {
         };
 
         const checkTransaction = async () => {
-            const { data } = await supabase
+            const { data, error } = await supabase
                 .from('wallet_transactions')
-                .select('id, amount')
+                .select('id, amount_kobo')
                 .eq('reference', reference)
                 .maybeSingle();
 
-            if (data) {
+            if (error) {
+                console.error('WalletSuccess: Transaction lookup error:', error);
+            } else if (data) {
                 console.log('WalletSuccess: Transaction found!', data);
                 setStatus('success');
                 await fetchWallet();
